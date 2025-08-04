@@ -7,12 +7,46 @@ import time
 import hashlib
 import hmac
 import secrets
-from typing import Dict, Any, Optional, List, Tuple
+import re
+from typing import Dict, Any, Optional, List, Tuple, Set
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from collections import defaultdict
+from collections import defaultdict, deque
 import threading
 import ipaddress
+from enum import Enum
+
+
+class ThreatLevel(Enum):
+    """Threat severity levels."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class AttackType(Enum):
+    """Types of detected attacks."""
+    INJECTION = "injection"
+    XSS = "xss"
+    BRUTE_FORCE = "brute_force"
+    ENUMERATION = "enumeration"
+    SCRAPING = "scraping"
+    DDOS = "ddos"
+    PRIVILEGE_ESCALATION = "privilege_escalation"
+    DATA_EXFILTRATION = "data_exfiltration"
+    SUSPICIOUS_PATTERN = "suspicious_pattern"
+
+
+@dataclass
+class ThreatDetection:
+    """Threat detection result."""
+    attack_type: AttackType
+    threat_level: ThreatLevel
+    confidence: float
+    indicators: List[str]
+    recommended_action: str
+    details: Dict[str, Any]
 
 
 @dataclass
@@ -485,3 +519,330 @@ class SecurityManager:
                 "requests_per_day": self.rate_limiter.config.requests_per_day
             }
         }
+
+
+class ThreatDetectionEngine:
+    """Advanced threat detection and monitoring engine."""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self._lock = threading.Lock()
+        
+        # Pattern databases for threat detection
+        self.injection_patterns = [
+            r"(?i)(union\s+select|select\s+.*\s+from|drop\s+table|delete\s+from)",
+            r"(?i)(insert\s+into|update\s+.*\s+set|alter\s+table)",
+            r"(?i)(\'\s*or\s+\d+\s*=\s*\d+|--|\#|\/\*|\*\/)",
+            r"(?i)(exec\s*\(|eval\s*\(|system\s*\(|shell_exec)",
+            r"(?i)(script\s*>|javascript:|data:text/html)"
+        ]
+        
+        self.xss_patterns = [
+            r"(?i)(<script[^>]*>.*?</script>|<script[^>]*>)",
+            r"(?i)(javascript:|data:text/html|vbscript:)",
+            r"(?i)(on\w+\s*=|<iframe|<object|<embed)",
+            r"(?i)(alert\s*\(|confirm\s*\(|prompt\s*\()",
+            r"(?i)(document\.cookie|document\.domain|window\.location)"
+        ]
+        
+        self.suspicious_patterns = [
+            r"(?i)(password|passwd|pwd|secret|token|key)\s*[:=]",
+            r"(?i)(admin|administrator|root|superuser)",
+            r"(?i)(\.\.\/|\.\.\\|%2e%2e%2f|%2e%2e%5c)",  # Path traversal
+            r"(?i)(\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b)",  # Credit card
+            r"(?i)(\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b)",  # SSN
+            r"(?i)([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"  # Email
+        ]
+        
+        # Behavioral analysis tracking
+        self.client_behavior: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
+            "request_count": 0,
+            "error_count": 0,
+            "unique_queries": set(),
+            "suspicious_queries": 0,
+            "last_seen": time.time(),
+            "request_intervals": deque(maxlen=50),
+            "user_agents": set(),
+            "threat_score": 0.0
+        })
+        
+        # Threat intelligence feeds (simplified)
+        self.known_malicious_ips: Set[str] = set()
+        self.suspicious_patterns_cache: Dict[str, ThreatDetection] = {}
+        
+        # Load threat intelligence (in production, would be from external feeds)
+        self._load_threat_intelligence()
+    
+    def analyze_request(
+        self,
+        query: str,
+        client_ip: str,
+        user_agent: Optional[str] = None,
+        user_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> List[ThreatDetection]:
+        """
+        Analyze incoming request for threats.
+        
+        Args:
+            query: User query to analyze
+            client_ip: Client IP address
+            user_agent: User agent string
+            user_id: User identifier
+            metadata: Additional request metadata
+            
+        Returns:
+            List of detected threats
+        """
+        threats = []
+        current_time = time.time()
+        
+        with self._lock:
+            # Update behavioral tracking
+            self._update_client_behavior(client_ip, query, user_agent, current_time)
+            
+            # Analyze query content
+            content_threats = self._analyze_content(query)
+            threats.extend(content_threats)
+            
+            # Analyze behavioral patterns
+            behavioral_threats = self._analyze_behavior(client_ip, current_time)
+            threats.extend(behavioral_threats)
+            
+            # Check against threat intelligence
+            intel_threats = self._check_threat_intelligence(client_ip, query)
+            threats.extend(intel_threats)
+            
+            # Update threat score
+            if threats:
+                behavior = self.client_behavior[client_ip]
+                for threat in threats:
+                    behavior["threat_score"] += threat.confidence * 0.1
+                
+                # Cap threat score
+                behavior["threat_score"] = min(behavior["threat_score"], 10.0)
+        
+        return threats
+    
+    def _analyze_content(self, query: str) -> List[ThreatDetection]:
+        """Analyze query content for malicious patterns."""
+        threats = []
+        
+        # Check for SQL injection
+        for pattern in self.injection_patterns:
+            if re.search(pattern, query):
+                threats.append(ThreatDetection(
+                    attack_type=AttackType.INJECTION,
+                    threat_level=ThreatLevel.HIGH,
+                    confidence=0.8,
+                    indicators=[f"SQL injection pattern detected: {pattern}"],
+                    recommended_action="block_request",
+                    details={"matched_pattern": pattern, "query_excerpt": query[:100]}
+                ))
+        
+        # Check for XSS
+        for pattern in self.xss_patterns:
+            if re.search(pattern, query):
+                threats.append(ThreatDetection(
+                    attack_type=AttackType.XSS,
+                    threat_level=ThreatLevel.HIGH,
+                    confidence=0.7,
+                    indicators=[f"XSS pattern detected: {pattern}"],
+                    recommended_action="sanitize_and_block",
+                    details={"matched_pattern": pattern, "query_excerpt": query[:100]}
+                ))
+        
+        # Check for suspicious patterns
+        suspicious_count = 0
+        for pattern in self.suspicious_patterns:
+            if re.search(pattern, query):
+                suspicious_count += 1
+        
+        if suspicious_count >= 2:
+            threats.append(ThreatDetection(
+                attack_type=AttackType.SUSPICIOUS_PATTERN,
+                threat_level=ThreatLevel.MEDIUM,
+                confidence=0.6,
+                indicators=[f"Multiple suspicious patterns detected: {suspicious_count}"],
+                recommended_action="monitor_closely",
+                details={"pattern_count": suspicious_count, "query_excerpt": query[:100]}
+            ))
+        
+        return threats
+    
+    def _analyze_behavior(self, client_ip: str, current_time: float) -> List[ThreatDetection]:
+        """Analyze client behavioral patterns."""
+        threats = []
+        behavior = self.client_behavior[client_ip]
+        
+        # Check request frequency
+        if len(behavior["request_intervals"]) >= 10:
+            avg_interval = sum(behavior["request_intervals"][-10:]) / 10
+            if avg_interval < 1.0:  # Less than 1 second between requests
+                threats.append(ThreatDetection(
+                    attack_type=AttackType.SCRAPING,
+                    threat_level=ThreatLevel.MEDIUM,
+                    confidence=0.7,
+                    indicators=[f"High frequency requests: {avg_interval:.2f}s average interval"],
+                    recommended_action="rate_limit",
+                    details={"avg_interval": avg_interval, "recent_requests": len(behavior["request_intervals"])}
+                ))
+        
+        # Check for brute force patterns
+        if behavior["error_count"] > 10 and behavior["request_count"] > 20:
+            error_rate = behavior["error_count"] / behavior["request_count"]
+            if error_rate > 0.5:
+                threats.append(ThreatDetection(
+                    attack_type=AttackType.BRUTE_FORCE,
+                    threat_level=ThreatLevel.HIGH,
+                    confidence=0.8,
+                    indicators=[f"High error rate: {error_rate:.1%}"],
+                    recommended_action="temporary_block",
+                    details={"error_rate": error_rate, "total_requests": behavior["request_count"]}
+                ))
+        
+        # Check for enumeration attempts
+        if len(behavior["unique_queries"]) > 50 and behavior["request_count"] > 100:
+            uniqueness_ratio = len(behavior["unique_queries"]) / behavior["request_count"]
+            if uniqueness_ratio > 0.8:  # Very diverse queries
+                threats.append(ThreatDetection(
+                    attack_type=AttackType.ENUMERATION,
+                    threat_level=ThreatLevel.MEDIUM,
+                    confidence=0.6,
+                    indicators=[f"High query diversity: {uniqueness_ratio:.1%}"],
+                    recommended_action="monitor_closely",
+                    details={"uniqueness_ratio": uniqueness_ratio, "unique_queries": len(behavior["unique_queries"])}
+                ))
+        
+        # Check overall threat score
+        if behavior["threat_score"] > 5.0:
+            threats.append(ThreatDetection(
+                attack_type=AttackType.SUSPICIOUS_PATTERN,
+                threat_level=ThreatLevel.HIGH,
+                confidence=min(behavior["threat_score"] / 10.0, 0.95),
+                indicators=[f"High cumulative threat score: {behavior['threat_score']:.1f}"],
+                recommended_action="block_client",
+                details={"threat_score": behavior["threat_score"]}
+            ))
+        
+        return threats
+    
+    def _check_threat_intelligence(self, client_ip: str, query: str) -> List[ThreatDetection]:
+        """Check against threat intelligence feeds."""
+        threats = []
+        
+        # Check known malicious IPs
+        if client_ip in self.known_malicious_ips:
+            threats.append(ThreatDetection(
+                attack_type=AttackType.SUSPICIOUS_PATTERN,
+                threat_level=ThreatLevel.CRITICAL,
+                confidence=0.95,
+                indicators=["IP address in threat intelligence database"],
+                recommended_action="block_immediately",
+                details={"source": "threat_intelligence", "ip": client_ip}
+            ))
+        
+        # Check for common attack vectors in query
+        attack_keywords = [
+            "admin", "password", "login", "token", "secret", "key",
+            "config", "database", "backup", "test", "debug"
+        ]
+        
+        query_lower = query.lower()
+        found_keywords = [kw for kw in attack_keywords if kw in query_lower]
+        
+        if len(found_keywords) >= 3:
+            threats.append(ThreatDetection(
+                attack_type=AttackType.ENUMERATION,
+                threat_level=ThreatLevel.MEDIUM,
+                confidence=0.5,
+                indicators=[f"Multiple attack keywords: {', '.join(found_keywords)}"],
+                recommended_action="monitor_closely",
+                details={"keywords": found_keywords}
+            ))
+        
+        return threats
+    
+    def _update_client_behavior(
+        self, 
+        client_ip: str, 
+        query: str, 
+        user_agent: Optional[str], 
+        current_time: float
+    ) -> None:
+        """Update client behavioral tracking."""
+        behavior = self.client_behavior[client_ip]
+        
+        # Update counters
+        behavior["request_count"] += 1
+        
+        # Track request intervals
+        if behavior["last_seen"]:
+            interval = current_time - behavior["last_seen"]
+            behavior["request_intervals"].append(interval)
+        
+        behavior["last_seen"] = current_time
+        
+        # Track unique queries (hash for privacy)
+        query_hash = hashlib.sha256(query.encode()).hexdigest()
+        behavior["unique_queries"].add(query_hash)
+        
+        # Track user agents
+        if user_agent:
+            behavior["user_agents"].add(user_agent)
+        
+        # Check for suspicious query patterns
+        if any(re.search(pattern, query) for pattern in self.suspicious_patterns):
+            behavior["suspicious_queries"] += 1
+    
+    def _load_threat_intelligence(self) -> None:
+        """Load threat intelligence data."""
+        # In production, this would load from external threat feeds
+        # For now, adding some known bad IPs as examples
+        self.known_malicious_ips.update([
+            "192.168.1.100",  # Example malicious IP
+            "10.0.0.5"        # Example malicious IP
+        ])
+    
+    def get_client_threat_score(self, client_ip: str) -> float:
+        """Get current threat score for client."""
+        return self.client_behavior[client_ip]["threat_score"]
+    
+    def reset_client_threats(self, client_ip: str) -> None:
+        """Reset threat tracking for client."""
+        if client_ip in self.client_behavior:
+            self.client_behavior[client_ip]["threat_score"] = 0.0
+            self.client_behavior[client_ip]["error_count"] = 0
+            self.client_behavior[client_ip]["suspicious_queries"] = 0
+    
+    def get_threat_stats(self) -> Dict[str, Any]:
+        """Get threat detection statistics."""
+        with self._lock:
+            total_clients = len(self.client_behavior)
+            high_threat_clients = sum(
+                1 for behavior in self.client_behavior.values()
+                if behavior["threat_score"] > 3.0
+            )
+            
+            total_requests = sum(
+                behavior["request_count"]
+                for behavior in self.client_behavior.values()
+            )
+            
+            suspicious_requests = sum(
+                behavior["suspicious_queries"]
+                for behavior in self.client_behavior.values()
+            )
+            
+            return {
+                "total_clients_tracked": total_clients,
+                "high_threat_clients": high_threat_clients,
+                "total_requests_analyzed": total_requests,
+                "suspicious_requests_detected": suspicious_requests,
+                "threat_intel_ips": len(self.known_malicious_ips),
+                "detection_patterns": {
+                    "injection_patterns": len(self.injection_patterns),
+                    "xss_patterns": len(self.xss_patterns),
+                    "suspicious_patterns": len(self.suspicious_patterns)
+                }
+            }
