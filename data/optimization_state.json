@@ -1,0 +1,27 @@
+{
+  "current_parameters": {
+    "retrieval_top_k": 20,
+    "retrieval_timeout": 5.0,
+    "retrieval_batch_size": 10,
+    "ranking_factors": {
+      "relevance": 0.3,
+      "recency": 0.2,
+      "authority": 0.3,
+      "consistency": 0.2
+    },
+    "factuality_threshold": 0.95,
+    "factuality_ensemble_size": 3,
+    "factuality_timeout": 10.0,
+    "cache_ttl_queries": 1800,
+    "cache_ttl_retrieval": 7200,
+    "cache_max_size": 1000,
+    "max_concurrent_queries": 10,
+    "max_concurrent_retrievals": 5,
+    "thread_pool_size": 8,
+    "max_answer_length": 2000,
+    "generation_timeout": 15.0
+  },
+  "parameter_history": {},
+  "performance_history": [],
+  "last_optimization": "2025-08-04T05:50:40.505248"
+}
