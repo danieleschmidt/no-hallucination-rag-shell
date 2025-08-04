@@ -1,0 +1,74 @@
+# Development Configuration for No-Hallucination RAG Shell
+
+rag_system:
+  factuality_threshold: 0.8
+  governance_mode: "balanced"
+  max_sources: 10
+  min_sources: 2
+  require_citations: false
+  
+  # Component toggles
+  enable_security: false
+  enable_metrics: true
+  enable_caching: true
+  enable_optimization: false
+  enable_concurrency: false
+
+retrieval:
+  top_k: 10
+  timeout: 5.0
+  batch_size: 5
+  
+factuality:
+  threshold: 0.8
+  ensemble_size: 1
+  timeout: 10.0
+  
+governance:
+  policies: ["whitehouse_2025"]
+  strict_mode: false
+  
+caching:
+  query_ttl: 300  # 5 minutes
+  retrieval_ttl: 600  # 10 minutes
+  factuality_ttl: 3600  # 1 hour
+  governance_ttl: 3600  # 1 hour
+  max_memory_mb: 64
+  
+security:
+  enable_ip_filtering: false
+  enable_request_signing: false
+  rate_limits:
+    requests_per_minute: 100
+    requests_per_hour: 1000
+    requests_per_day: 10000
+    
+concurrency:
+  max_concurrent_queries: 5
+  max_concurrent_retrievals: 3
+  max_concurrent_verifications: 2
+  thread_pool_size: 4
+  
+optimization:
+  auto_optimize: false
+  monitoring_window_minutes: 30
+  optimization_interval_minutes: 60
+  min_samples: 10
+  
+logging:
+  level: "DEBUG"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/app.log"
+  max_file_size: "5MB"
+  backup_count: 3
+  
+metrics:
+  export_to: "log"
+  export_interval: 30
+  retention_hours: 12
+  
+paths:
+  data_dir: "data"
+  cache_dir: "cache"
+  logs_dir: "logs"
+  models_dir: "models"

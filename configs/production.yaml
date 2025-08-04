@@ -1,0 +1,74 @@
+# Production Configuration for No-Hallucination RAG Shell
+
+rag_system:
+  factuality_threshold: 0.95
+  governance_mode: "strict"
+  max_sources: 15
+  min_sources: 3
+  require_citations: true
+  
+  # Component toggles
+  enable_security: true
+  enable_metrics: true
+  enable_caching: true
+  enable_optimization: true
+  enable_concurrency: true
+
+retrieval:
+  top_k: 20
+  timeout: 10.0
+  batch_size: 10
+  
+factuality:
+  threshold: 0.95
+  ensemble_size: 3
+  timeout: 15.0
+  
+governance:
+  policies: ["whitehouse_2025", "nist_framework", "eu_ai_act"]
+  strict_mode: true
+  
+caching:
+  query_ttl: 1800  # 30 minutes
+  retrieval_ttl: 7200  # 2 hours
+  factuality_ttl: 86400  # 24 hours
+  governance_ttl: 43200  # 12 hours
+  max_memory_mb: 512
+  
+security:
+  enable_ip_filtering: true
+  enable_request_signing: false
+  rate_limits:
+    requests_per_minute: 30
+    requests_per_hour: 500
+    requests_per_day: 5000
+    
+concurrency:
+  max_concurrent_queries: 20
+  max_concurrent_retrievals: 10
+  max_concurrent_verifications: 5
+  thread_pool_size: 16
+  
+optimization:
+  auto_optimize: true
+  monitoring_window_minutes: 60
+  optimization_interval_minutes: 30
+  min_samples: 100
+  
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "/var/log/no-hallucination-rag/app.log"
+  max_file_size: "10MB"
+  backup_count: 5
+  
+metrics:
+  export_to: "prometheus"
+  export_interval: 60
+  retention_hours: 24
+  
+paths:
+  data_dir: "/opt/no-hallucination-rag/data"
+  cache_dir: "/opt/no-hallucination-rag/cache"
+  logs_dir: "/var/log/no-hallucination-rag"
+  models_dir: "/opt/no-hallucination-rag/models"
