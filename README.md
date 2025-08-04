@@ -630,9 +630,9 @@ We especially welcome:
 ```bibtex
 @software{no_hallucination_rag_shell,
   title = {No-Hallucination RAG Shell: Retrieval-First CLI with Zero Hallucination},
-  author = {Your Name},
+  author = {Daniel Schmidt},
   year = {2025},
-  url = {https://github.com/yourusername/no-hallucination-rag-shell}
+  url = {https://github.com/danieleschmidt/no-hallucination-rag-shell}
 }
 ```
 
