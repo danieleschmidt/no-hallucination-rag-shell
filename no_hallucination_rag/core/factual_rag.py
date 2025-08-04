@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import asyncio
 from datetime import datetime
 import time
+import hashlib
 
 from ..retrieval.hybrid_retriever import HybridRetriever
 from ..verification.factuality_detector import FactualityDetector
@@ -23,6 +24,8 @@ from ..security.security_manager import SecurityManager
 from ..optimization.caching import CacheManager, cached_method
 from ..optimization.concurrent_processing import AsyncRAGProcessor, ThreadPoolManager
 from ..optimization.performance_optimizer import PerformanceOptimizer
+from .text_generator import TextGenerator, GenerationConfig
+from ..monitoring.audit_logger import audit_logger, AuditEventType, AuditLevel
 
 
 @dataclass
@@ -79,6 +82,7 @@ class FactualRAG:
         self.source_ranker = SourceRanker()
         self.factuality_detector = FactualityDetector()
         self.governance_checker = GovernanceChecker(mode=governance_mode)
+        self.text_generator = TextGenerator()
         
         # Initialize robust components
         self.input_validator = InputValidator()
@@ -124,6 +128,20 @@ class FactualRAG:
         min_sources = min_sources or self.min_sources
         min_factuality_score = min_factuality_score or self.factuality_threshold
         client_context = client_context or {}
+        
+        # Log user query for audit
+        query_event_id = audit_logger.log_user_query(
+            query=question,
+            user_id=client_context.get("user_id"),
+            session_id=client_context.get("session_id"),
+            client_ip=client_context.get("client_ip"),
+            user_agent=client_context.get("user_agent"),
+            metadata={
+                "require_citations": require_citations,
+                "min_sources": min_sources,
+                "min_factuality_score": min_factuality_score
+            }
+        )
         
         # Create error context for detailed error handling
         error_context = ErrorContext(
@@ -309,23 +327,30 @@ class FactualRAG:
         return responses
         
     def _generate_answer(self, question: str, sources: List[Dict[str, Any]]) -> str:
-        """Generate answer from ranked sources."""
-        # Simple implementation for Generation 1
-        # In Generation 2, this will use advanced LLM generation
+        """Generate answer from ranked sources using LLM or template-based generation."""
         
         if not sources:
             return "I cannot provide an answer as no reliable sources were found."
         
-        # Extract key information from top sources
-        context_parts = []
-        for i, source in enumerate(sources[:3], 1):  # Use top 3 sources
-            content = source.get("content", "")[:500]  # Truncate for simplicity
-            context_parts.append(f"[Source {i}]: {content}")
+        # Use the text generator to create a comprehensive answer
+        generation_result = self.text_generator.generate_answer(
+            query=question,
+            sources=sources,
+            require_citations=self.require_citations
+        )
         
-        context = "\n\n".join(context_parts)
+        # Extract the generated answer
+        answer = generation_result.get("answer", "")
         
-        # Basic answer synthesis (will be enhanced in Generation 2)
-        answer = f"Based on the available sources:\n\n{context}"
+        # If generation failed, fall back to simple template
+        if not answer:
+            context_parts = []
+            for i, source in enumerate(sources[:3], 1):  # Use top 3 sources
+                content = source.get("content", "")[:500]  # Truncate for simplicity
+                context_parts.append(f"[Source {i}]: {content}")
+            
+            context = "\n\n".join(context_parts)
+            answer = f"Based on the available sources:\n\n{context}"
         
         return answer
     
@@ -461,6 +486,17 @@ class FactualRAG:
                 top_k=self.max_sources * 2  # Get more for ranking
             )
             
+            # Log document access for audit
+            if sources:
+                sources_accessed = [source.get("url", source.get("title", source.get("id", "unknown"))) for source in sources]
+                audit_logger.log_document_access(
+                    sources_accessed=sources_accessed,
+                    user_id=error_context.additional_data.get("user_id") if error_context.additional_data else None,
+                    session_id=error_context.additional_data.get("session_id") if error_context.additional_data else None,
+                    query_hash=hashlib.sha256(question.encode()).hexdigest()[:16],
+                    metadata={"num_sources": len(sources)}
+                )
+            
             retrieval_time = time.time() - start_time
             
             # Track retrieval metrics
@@ -578,6 +614,20 @@ class FactualRAG:
             )
             
             verification_time = time.time() - start_time
+            
+            # Log factuality check for audit
+            claims_verified = len(self.factuality_detector._extract_claims(answer))
+            audit_logger.log_factuality_check(
+                query=question,
+                factuality_score=factuality_score,
+                claims_verified=claims_verified,
+                user_id=error_context.additional_data.get("user_id") if error_context.additional_data else None,
+                session_id=error_context.additional_data.get("session_id") if error_context.additional_data else None,
+                metadata={
+                    "num_sources": len(sources),
+                    "verification_time_ms": verification_time * 1000
+                }
+            )
             
             # Track factuality metrics
             if self.metrics_collector:
