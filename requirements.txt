@@ -1,0 +1,104 @@
+# Quantum-Enhanced RAG System - Production Requirements
+
+# Core Dependencies
+numpy>=1.21.0,<2.0.0          # Numerical computing for quantum calculations
+networkx>=2.6,<4.0            # Graph algorithms for entanglement networks
+rich>=12.0.0,<14.0.0          # Terminal UI and interactive shell
+
+# Optional ML Dependencies (recommended for advanced features)
+sentence-transformers>=2.2.0,<3.0.0  # For semantic embeddings in RAG
+torch>=1.12.0,<3.0.0          # PyTorch for neural networks
+scikit-learn>=1.1.0,<2.0.0    # Machine learning utilities
+
+# Development Dependencies
+pytest>=7.0.0,<8.0.0          # Testing framework
+pytest-cov>=4.0.0,<5.0.0      # Coverage reporting
+pytest-asyncio>=0.20.0,<1.0.0 # Async testing support
+black>=22.0.0,<24.0.0         # Code formatting
+flake8>=5.0.0,<7.0.0          # Linting
+mypy>=0.991,<2.0.0            # Type checking
+bandit>=1.7.0,<2.0.0          # Security linting
+
+# Performance and Monitoring
+prometheus-client>=0.15.0,<1.0.0  # Metrics collection
+opentelemetry-api>=1.15.0,<2.0.0  # Distributed tracing
+opentelemetry-sdk>=1.15.0,<2.0.0  # Tracing implementation
+
+# Security
+cryptography>=3.4.8,<42.0.0   # Encryption and security
+pyjwt>=2.4.0,<3.0.0           # JWT token handling
+
+# Configuration and Utilities
+pydantic>=1.10.0,<3.0.0       # Data validation
+pyyaml>=6.0,<7.0              # YAML configuration
+python-dotenv>=0.19.0,<2.0.0  # Environment variable management
+click>=8.0.0,<9.0.0           # CLI interface
+
+# Database (Optional)
+sqlalchemy>=1.4.0,<3.0.0      # Database ORM
+alembic>=1.8.0,<2.0.0         # Database migrations
+
+# Web Framework (Optional)
+fastapi>=0.95.0,<1.0.0        # API framework
+uvicorn>=0.18.0,<1.0.0        # ASGI server
+
+# Redis Cache (Optional)
+redis>=4.3.0,<6.0.0           # Redis client for L2 caching
+
+# Internationalization
+babel>=2.10.0,<3.0.0          # i18n utilities
+gettext>=4.0,<5.0             # Translation tools
+
+# Documentation (Development)
+sphinx>=5.0.0,<8.0.0          # Documentation generator
+sphinx-rtd-theme>=1.2.0,<3.0.0  # Documentation theme
+myst-parser>=0.18.0,<3.0.0    # Markdown parser for Sphinx
+
+# Profiling and Performance Analysis (Development)
+py-spy>=0.3.0,<1.0.0          # Python profiler
+memory-profiler>=0.60.0,<1.0.0  # Memory usage profiler
+line-profiler>=4.0.0,<5.0.0   # Line-by-line profiler
+
+# Additional Testing Tools (Development)
+hypothesis>=6.54.0,<7.0.0     # Property-based testing
+factory-boy>=3.2.0,<4.0.0     # Test data generation
+responses>=0.21.0,<1.0.0      # HTTP request mocking
+
+# Quality Assurance (Development)
+pre-commit>=2.20.0,<4.0.0     # Git pre-commit hooks
+safety>=2.0.0,<4.0.0          # Security vulnerability scanner
+pip-audit>=2.4.0,<3.0.0       # Dependency vulnerability scanning
+
+# Container and Deployment
+gunicorn>=20.1.0,<22.0.0      # WSGI server for production
+gevent>=22.0.0,<24.0.0        # Async networking for gunicorn
+
+# Data Science (Optional for advanced analytics)
+pandas>=1.5.0,<3.0.0          # Data manipulation
+matplotlib>=3.5.0,<4.0.0      # Plotting for quantum visualizations
+seaborn>=0.11.0,<1.0.0        # Statistical visualization
+
+# Protocol Buffers (Optional for high-performance serialization)
+protobuf>=3.20.0,<5.0.0       # Efficient serialization
+
+# Message Queue Integration (Optional)
+celery>=5.2.0,<6.0.0          # Distributed task queue
+kombu>=5.2.0,<6.0.0           # Message passing library
+
+# Cloud Storage (Optional)
+boto3>=1.24.0,<2.0.0          # AWS SDK
+google-cloud-storage>=2.5.0,<3.0.0  # Google Cloud Storage
+azure-storage-blob>=12.13.0,<13.0.0  # Azure Blob Storage
+
+# Compatibility Notes:
+# - Python 3.8+ required for advanced type hints
+# - numpy<2.0.0 for compatibility with scientific computing stack
+# - torch versions compatible with current CUDA drivers
+# - networkx<4.0 for stable graph algorithms API
+# - All security packages use conservative version ranges
+
+# Installation groups for different use cases:
+# pip install -e ".[dev]"      # Development with all tools
+# pip install -e ".[prod]"     # Production deployment
+# pip install -e ".[ml]"       # ML-enhanced features
+# pip install -e ".[cloud]"    # Cloud deployment support
