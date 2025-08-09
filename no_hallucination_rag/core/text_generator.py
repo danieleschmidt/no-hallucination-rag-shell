@@ -1,5 +1,6 @@
 """
 Text generation component with LLM integration for answer synthesis.
+Generation 1: Template-based generation with rule-based synthesis.
 """
 
 import logging
@@ -7,8 +8,8 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import json
 import re
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
-import torch
+import random
+from datetime import datetime
 
 
 @dataclass
@@ -28,42 +29,19 @@ class TextGenerator:
     
     def __init__(
         self,
-        model_name: str = "microsoft/DialoGPT-medium",
+        model_name: str = "rule_based_generator",
         config: Optional[GenerationConfig] = None,
-        device: str = "auto"
+        device: str = "cpu"
     ):
         self.model_name = model_name
         self.config = config or GenerationConfig()
         self.device = device
         self.logger = logging.getLogger(__name__)
         
-        self.model = None
-        self.tokenizer = None
-        self.generator = None
+        # Generation 1: Template-based answer synthesis
+        self.answer_templates = self._init_answer_templates()
         
-        # Initialize model
-        self._initialize_model()
-    
-    def _initialize_model(self):
-        """Initialize the language model."""
-        try:
-            # Try to load a lightweight model first
-            self.logger.info(f"Loading text generation model: {self.model_name}")
-            
-            # For Generation 1, use a pipeline approach
-            self.generator = pipeline(
-                "text-generation",
-                model=self.model_name,
-                device=0 if torch.cuda.is_available() else -1,
-                return_full_text=False
-            )
-            
-            self.logger.info("Text generation model loaded successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to load model: {e}")
-            self.logger.warning("Falling back to template-based generation")
-            self.generator = None
+        self.logger.info("TextGenerator initialized (Generation 1: Template-based)")
     
     def generate_answer(
         self,
@@ -72,244 +50,293 @@ class TextGenerator:
         require_citations: bool = True
     ) -> Dict[str, Any]:
         """
-        Generate a factual answer from sources.
+        Generate an answer from query and sources.
         
         Args:
-            query: User query
-            sources: Retrieved and ranked sources
+            query: User's question
+            sources: Retrieved source documents
             require_citations: Whether to include citations
             
         Returns:
-            Dict with generated answer and metadata
+            Dict containing generated answer and metadata
         """
         try:
-            # Use LLM generation if available, otherwise template-based
-            if self.generator is not None:
-                return self._llm_generate(query, sources, require_citations)
-            else:
-                return self._template_generate(query, sources, require_citations)
-                
+            if not sources:
+                return {
+                    "answer": "I cannot provide an answer as no reliable sources were found.",
+                    "confidence": 0.0,
+                    "sources_used": 0,
+                    "generation_method": "fallback"
+                }
+            
+            # Extract key information from sources
+            key_info = self._extract_key_information(query, sources)
+            
+            # Select appropriate template
+            template = self._select_template(query, key_info)
+            
+            # Generate answer using template
+            answer = self._apply_template(template, query, key_info, sources)
+            
+            # Add citations if required
+            if require_citations:
+                answer = self._add_citations(answer, sources)
+            
+            # Calculate confidence based on source quality
+            confidence = self._calculate_confidence(key_info, sources)
+            
+            return {
+                "answer": answer,
+                "confidence": confidence,
+                "sources_used": len(sources),
+                "generation_method": "template_based",
+                "key_concepts": key_info.get("concepts", [])
+            }
+            
         except Exception as e:
             self.logger.error(f"Error in answer generation: {e}")
-            return self._fallback_generate(query, sources)
-    
-    def _llm_generate(
-        self,
-        query: str,
-        sources: List[Dict[str, Any]],
-        require_citations: bool
-    ) -> Dict[str, Any]:
-        """Generate answer using LLM."""
-        
-        # Construct prompt with sources
-        prompt = self._build_rag_prompt(query, sources, require_citations)
-        
-        try:
-            # Generate with the model
-            generation_kwargs = {
-                "max_length": self.config.max_length,
-                "temperature": self.config.temperature,
-                "top_p": self.config.top_p,
-                "repetition_penalty": self.config.repetition_penalty,
-                "do_sample": self.config.do_sample,
-                "num_beams": self.config.num_beams,
-                "early_stopping": self.config.early_stopping,
-                "pad_token_id": 50256  # GPT-2 pad token
-            }
-            
-            outputs = self.generator(prompt, **generation_kwargs)
-            
-            if outputs and len(outputs) > 0:
-                generated_text = outputs[0]["generated_text"].strip()
-                
-                # Post-process the generated text
-                processed_answer = self._post_process_answer(generated_text, sources)
-                
-                return {
-                    "answer": processed_answer["text"],
-                    "citations": processed_answer["citations"],
-                    "generation_method": "llm",
-                    "model_name": self.model_name,
-                    "confidence": 0.8  # Default LLM confidence
-                }
-            else:
-                return self._template_generate(query, sources, require_citations)
-                
-        except Exception as e:
-            self.logger.error(f"LLM generation failed: {e}")
-            return self._template_generate(query, sources, require_citations)
-    
-    def _template_generate(
-        self,
-        query: str,
-        sources: List[Dict[str, Any]],
-        require_citations: bool
-    ) -> Dict[str, Any]:
-        """Generate answer using template-based approach."""
-        
-        if not sources:
             return {
-                "answer": "I don't have sufficient reliable sources to answer this question.",
-                "citations": [],
-                "generation_method": "template",
-                "confidence": 0.0
+                "answer": f"An error occurred while generating the answer: {e}",
+                "confidence": 0.0,
+                "sources_used": len(sources),
+                "generation_method": "error_fallback"
             }
+    
+    def _extract_key_information(
+        self, 
+        query: str, 
+        sources: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Extract key information from sources relevant to query."""
         
-        # Extract key information from sources
-        key_points = self._extract_key_points(query, sources)
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
         
-        # Build structured answer
-        answer_parts = []
-        citations = []
-        
-        if len(key_points) > 0:
-            answer_parts.append(f"Based on authoritative sources:")
-            
-            for i, point in enumerate(key_points[:5], 1):  # Limit to top 5 points
-                answer_parts.append(f"\n{i}. {point['text']}")
-                
-                if require_citations:
-                    source = point['source']
-                    citation = f"[{i}] {source.get('url', source.get('title', 'Unknown source'))}"
-                    citations.append(citation)
-                    
-        else:
-            answer_parts.append("The available sources do not contain sufficient information to provide a comprehensive answer to your question.")
-        
-        # Add source summary
-        if len(sources) > 1:
-            answer_parts.append(f"\n\nThis information is based on {len(sources)} authoritative sources.")
-        
-        return {
-            "answer": " ".join(answer_parts),
-            "citations": citations,
-            "generation_method": "template",
-            "confidence": min(0.9, len(key_points) * 0.2)
+        key_info = {
+            "concepts": [],
+            "facts": [],
+            "definitions": [],
+            "numbers": [],
+            "dates": [],
+            "authorities": []
         }
-    
-    def _fallback_generate(self, query: str, sources: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Fallback generation when other methods fail."""
-        return {
-            "answer": "I apologize, but I'm unable to generate a reliable answer at this time. Please try rephrasing your question.",
-            "citations": [],
-            "generation_method": "fallback",
-            "confidence": 0.0
-        }
-    
-    def _build_rag_prompt(
-        self,
-        query: str,
-        sources: List[Dict[str, Any]],
-        require_citations: bool
-    ) -> str:
-        """Build RAG prompt for LLM generation."""
-        
-        prompt_parts = [
-            "You are a factual AI assistant. Answer the question using only the provided sources.",
-            "Be accurate, concise, and cite your sources."
-        ]
-        
-        if require_citations:
-            prompt_parts.append("Include numbered citations [1], [2], etc. for each claim.")
-        
-        prompt_parts.append("\nSources:")
-        
-        for i, source in enumerate(sources[:5], 1):  # Limit to 5 sources
-            title = source.get('title', 'Unknown')
-            content = source.get('content', '')[:300]  # Truncate content
-            prompt_parts.append(f"\n[{i}] {title}: {content}")
-        
-        prompt_parts.append(f"\nQuestion: {query}")
-        prompt_parts.append("\nAnswer:")
-        
-        return "\n".join(prompt_parts)
-    
-    def _extract_key_points(self, query: str, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Extract key points from sources relevant to the query."""
-        
-        key_points = []
-        query_words = set(query.lower().split())
         
         for source in sources:
-            content = source.get('content', '')
-            sentences = self._split_into_sentences(content)
+            content = source.get("content", "")
+            title = source.get("title", "")
             
+            # Extract concepts (words that appear in both query and source)
+            content_words = set(content.lower().split())
+            common_words = query_words.intersection(content_words)
+            key_info["concepts"].extend(common_words)
+            
+            # Extract numbers and dates
+            numbers = re.findall(r'\b\d+(?:\.\d+)?%?\b', content)
+            key_info["numbers"].extend(numbers)
+            
+            dates = re.findall(r'\b\d{4}\b', content)
+            key_info["dates"].extend(dates)
+            
+            # Extract definitions (sentences with "is", "are", "means")
+            sentences = content.split('.')
             for sentence in sentences:
-                sentence_words = set(sentence.lower().split())
-                overlap = len(query_words.intersection(sentence_words))
-                
-                if overlap >= 2 and len(sentence) > 50:  # Minimum relevance and length
-                    key_points.append({
-                        'text': sentence.strip(),
-                        'source': source,
-                        'relevance': overlap
-                    })
+                if any(word in sentence.lower() for word in ['is ', 'are ', 'means ', 'refers to']):
+                    if len(sentence.strip()) < 200:  # Keep definitions concise
+                        key_info["definitions"].append(sentence.strip())
+            
+            # Extract factual statements (sentences with authoritative language)
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                if any(auth in sentence_lower for auth in ['according to', 'research shows', 'study found']):
+                    key_info["facts"].append(sentence.strip())
+            
+            # Track authorities
+            source_name = source.get("source", "")
+            if source_name and source_name not in key_info["authorities"]:
+                key_info["authorities"].append(source_name)
         
-        # Sort by relevance and remove duplicates
-        key_points.sort(key=lambda x: x['relevance'], reverse=True)
+        # Remove duplicates and limit items
+        for key in key_info:
+            if isinstance(key_info[key], list):
+                key_info[key] = list(set(key_info[key]))[:5]  # Limit to 5 items each
         
-        # Remove near-duplicates
-        unique_points = []
-        for point in key_points:
-            is_duplicate = False
-            for existing in unique_points:
-                if self._calculate_similarity(point['text'], existing['text']) > 0.8:
-                    is_duplicate = True
-                    break
-            if not is_duplicate:
-                unique_points.append(point)
-        
-        return unique_points[:10]  # Return top 10 unique points
+        return key_info
     
-    def _split_into_sentences(self, text: str) -> List[str]:
-        """Split text into sentences."""
-        # Simple sentence splitting
-        sentences = re.split(r'[.!?]+', text)
-        return [s.strip() for s in sentences if len(s.strip()) > 10]
+    def _select_template(self, query: str, key_info: Dict[str, Any]) -> str:
+        """Select appropriate answer template based on query type."""
+        
+        query_lower = query.lower()
+        
+        # Question type classification
+        if query_lower.startswith(('what is', 'what are')):
+            return 'definition'
+        elif query_lower.startswith(('how to', 'how do')):
+            return 'procedure'
+        elif query_lower.startswith(('why', 'what causes')):
+            return 'explanation'
+        elif query_lower.startswith(('when', 'what year')):
+            return 'temporal'
+        elif query_lower.startswith(('where')):
+            return 'location'
+        elif '?' in query:
+            return 'general_question'
+        else:
+            return 'informative'
     
-    def _calculate_similarity(self, text1: str, text2: str) -> float:
-        """Calculate text similarity (Jaccard similarity)."""
-        words1 = set(text1.lower().split())
-        words2 = set(text2.lower().split())
+    def _apply_template(
+        self, 
+        template_type: str, 
+        query: str, 
+        key_info: Dict[str, Any], 
+        sources: List[Dict[str, Any]]
+    ) -> str:
+        """Apply selected template to generate answer."""
         
-        intersection = words1.intersection(words2)
-        union = words1.union(words2)
+        templates = self.answer_templates.get(template_type, self.answer_templates['default'])
+        selected_template = random.choice(templates)
         
-        return len(intersection) / len(union) if union else 0.0
+        # Prepare template variables
+        concepts = ", ".join(key_info.get("concepts", [])[:3])
+        
+        # Get best source content
+        best_content = ""
+        if sources:
+            best_source = max(sources, key=lambda x: x.get("authority_score", 0.5))
+            best_content = best_source.get("content", "")[:300]
+        
+        # Get facts and definitions
+        facts = ". ".join(key_info.get("facts", [])[:2])
+        definitions = ". ".join(key_info.get("definitions", [])[:2])
+        
+        # Numbers and dates
+        numbers = ", ".join(key_info.get("numbers", [])[:3])
+        dates = ", ".join(key_info.get("dates", [])[:3])
+        
+        # Authorities
+        authorities = ", ".join(key_info.get("authorities", [])[:2])
+        
+        try:
+            # Apply template
+            answer = selected_template.format(
+                query=query,
+                concepts=concepts or "relevant topics",
+                content=best_content or "available information",
+                facts=facts or "supporting evidence",
+                definitions=definitions or "key concepts",
+                numbers=numbers or "statistical data",
+                dates=dates or "temporal information",
+                authorities=authorities or "authoritative sources"
+            )
+            
+            # Clean up empty sections
+            answer = re.sub(r'\.\s*\.', '.', answer)  # Remove double periods
+            answer = re.sub(r'\s+', ' ', answer)  # Normalize whitespace
+            
+            return answer.strip()
+            
+        except Exception as e:
+            self.logger.error(f"Template application failed: {e}")
+            return f"Based on the available sources, {best_content}"
     
-    def _post_process_answer(self, text: str, sources: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Post-process generated answer to extract citations."""
+    def _add_citations(self, answer: str, sources: List[Dict[str, Any]]) -> str:
+        """Add citation markers to the answer."""
         
-        # Extract citations from text
-        citation_pattern = r'\[(\d+)\]'
-        citations_found = re.findall(citation_pattern, text)
+        if not sources:
+            return answer
         
-        # Build citation list
-        citations = []
-        for i, citation_num in enumerate(set(citations_found), 1):
-            try:
-                source_idx = int(citation_num) - 1
-                if 0 <= source_idx < len(sources):
-                    source = sources[source_idx]
-                    citation = f"[{i}] {source.get('url', source.get('title', 'Unknown source'))}"
-                    citations.append(citation)
-            except (ValueError, IndexError):
-                continue
+        # Simple approach: add citation numbers at the end of sentences
+        sentences = answer.split('. ')
+        
+        for i, sentence in enumerate(sentences):
+            if sentence.strip() and i < len(sources):
+                citation_num = (i % len(sources)) + 1
+                sentences[i] = f"{sentence} [{citation_num}]"
+        
+        return '. '.join(sentences)
+    
+    def _calculate_confidence(
+        self, 
+        key_info: Dict[str, Any], 
+        sources: List[Dict[str, Any]]
+    ) -> float:
+        """Calculate confidence score for generated answer."""
+        
+        confidence = 0.5  # Base confidence
+        
+        # Boost for multiple sources
+        if len(sources) >= 2:
+            confidence += 0.2
+        
+        # Boost for authoritative sources
+        avg_authority = sum(s.get("authority_score", 0.5) for s in sources) / len(sources)
+        confidence += (avg_authority - 0.5) * 0.3
+        
+        # Boost for factual content
+        if key_info.get("facts"):
+            confidence += 0.1
+        
+        if key_info.get("numbers") or key_info.get("dates"):
+            confidence += 0.1
+        
+        # Boost for definitions
+        if key_info.get("definitions"):
+            confidence += 0.1
+        
+        return max(0.0, min(1.0, confidence))
+    
+    def _init_answer_templates(self) -> Dict[str, List[str]]:
+        """Initialize answer templates for different question types."""
         
         return {
-            "text": text,
-            "citations": citations
+            'definition': [
+                "Based on the available sources, {concepts} refers to {definitions}. {content}",
+                "{definitions}. According to {authorities}, {facts}",
+                "The key aspects of {concepts} include {definitions}. {content}"
+            ],
+            'procedure': [
+                "According to the sources, the process involves {content}. {facts}",
+                "Based on {authorities}, the recommended approach is: {content}",
+                "The available information suggests {content}. {facts}"
+            ],
+            'explanation': [
+                "The sources indicate that {facts}. {content}",
+                "According to {authorities}, this occurs because {content}",
+                "The available evidence suggests {facts}. {content}"
+            ],
+            'temporal': [
+                "Based on the available information, the timeframe is {dates}. {content}",
+                "According to {authorities}, this occurred in {dates}. {facts}",
+                "The sources indicate timing around {dates}. {content}"
+            ],
+            'location': [
+                "According to the sources, {content}",
+                "The available information indicates {facts}",
+                "Based on {authorities}, {content}"
+            ],
+            'general_question': [
+                "Based on the available sources, {content}. {facts}",
+                "According to {authorities}, {content}",
+                "The information suggests {facts}. {content}"
+            ],
+            'informative': [
+                "The available sources indicate that {content}. {facts}",
+                "According to {authorities}, {content}",
+                "Based on the information available, {facts}. {content}"
+            ],
+            'default': [
+                "Based on the available sources: {content}",
+                "According to the information available: {facts}",
+                "The sources indicate: {content}"
+            ]
         }
     
-    def get_stats(self) -> Dict[str, Any]:
-        """Get generator statistics."""
+    def get_generation_stats(self) -> Dict[str, Any]:
+        """Get text generation statistics."""
         return {
             "model_name": self.model_name,
-            "model_loaded": self.generator is not None,
             "device": self.device,
-            "config": {
-                "max_length": self.config.max_length,
-                "temperature": self.config.temperature,
-                "top_p": self.config.top_p
-            }
+            "max_length": self.config.max_length,
+            "temperature": self.config.temperature,
+            "generation": 1,
+            "method": "template_based"
         }

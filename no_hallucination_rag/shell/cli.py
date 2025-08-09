@@ -1,91 +1,85 @@
 """
 Command-line interface entry point.
+Generation 1: Basic CLI without click dependency.
 """
 
-import click
 import logging
 import sys
-from pathlib import Path
+import argparse
 from typing import Optional
 
 from .interactive_shell import InteractiveShell
 
 
-@click.command()
-@click.option(
-    '--config', '-c',
-    type=click.Path(exists=True),
-    help='Configuration file path'
-)
-@click.option(
-    '--threshold', '-t',
-    type=float,
-    default=0.95,
-    help='Factuality threshold (0.0-1.0)'
-)
-@click.option(
-    '--governance-mode', '-g',
-    type=click.Choice(['strict', 'balanced', 'permissive']),
-    default='strict',
-    help='Governance compliance mode'
-)
-@click.option(
-    '--verbose', '-v',
-    is_flag=True,
-    help='Enable verbose logging'
-)
-@click.option(
-    '--log-file',
-    type=click.Path(),
-    help='Log file path'
-)
-def main(
-    config: Optional[str],
-    threshold: float,
-    governance_mode: str,
-    verbose: bool,
-    log_file: Optional[str]
-) -> None:
+def main():
     """
     No-Hallucination RAG Shell - Interactive AI assistant with factuality guarantees.
-    
-    Examples:
-        no-hallucination-shell
-        no-hallucination-shell --threshold 0.9 --governance-mode balanced
-        no-hallucination-shell --config configs/high_precision.yaml
     """
+    parser = argparse.ArgumentParser(
+        description="No-Hallucination RAG Shell - Interactive AI assistant with factuality guarantees"
+    )
+    
+    parser.add_argument(
+        '--config', '-c',
+        type=str,
+        help='Configuration file path'
+    )
+    parser.add_argument(
+        '--threshold', '-t',
+        type=float,
+        default=0.85,  # Lower threshold for Generation 1
+        help='Factuality threshold (0.0-1.0, default: 0.85)'
+    )
+    parser.add_argument(
+        '--governance-mode', '-g',
+        choices=['strict', 'balanced', 'permissive'],
+        default='balanced',  # More permissive for Generation 1
+        help='Governance compliance mode (default: balanced)'
+    )
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Enable verbose logging'
+    )
+    parser.add_argument(
+        '--log-file',
+        type=str,
+        help='Log file path'
+    )
+    
+    args = parser.parse_args()
+    
     # Setup logging
-    setup_logging(verbose, log_file)
+    setup_logging(args.verbose, args.log_file)
     
     # Validate threshold
-    if not 0.0 <= threshold <= 1.0:
-        click.echo("Error: Threshold must be between 0.0 and 1.0", err=True)
+    if not 0.0 <= args.threshold <= 1.0:
+        print("Error: Threshold must be between 0.0 and 1.0", file=sys.stderr)
         sys.exit(1)
     
     # Load configuration
     shell_config = {
-        'governance_mode': governance_mode,
-        'verbose': verbose
+        'governance_mode': args.governance_mode,
+        'verbose': args.verbose
     }
     
-    if config:
-        # Load config file (simplified for Generation 1)
-        click.echo(f"Loading configuration from: {config}")
+    if args.config:
+        print(f"Loading configuration from: {args.config}")
     
     try:
         # Initialize and run shell
         shell = InteractiveShell(
             config=shell_config,
-            factuality_threshold=threshold
+            factuality_threshold=args.threshold
         )
         
         shell.run()
         
     except KeyboardInterrupt:
-        click.echo("\nGoodbye!")
+        print("\nGoodbye!")
         sys.exit(0)
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
