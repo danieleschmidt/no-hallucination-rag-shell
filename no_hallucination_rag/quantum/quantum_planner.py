@@ -8,11 +8,12 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime, timedelta
-import numpy as np
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 import json
+import math
+import random
 
 
 class TaskState(Enum):
@@ -78,8 +79,8 @@ class QuantumTask:
             return 0.0
         
         # Simplified interference calculation
-        phase_difference = abs(hash(self.id) - hash(other_task.id)) % (2 * np.pi)
-        return self.probability_amplitude * other_task.probability_amplitude * np.cos(phase_difference)
+        phase_difference = abs(hash(self.id) - hash(other_task.id)) % (2 * math.pi)
+        return self.probability_amplitude * other_task.probability_amplitude * math.cos(phase_difference)
 
 
 class QuantumTaskPlanner:
@@ -155,7 +156,7 @@ class QuantumTaskPlanner:
             else:
                 # Use quantum probability to determine collapsed state
                 probability = task.probability_amplitude ** 2
-                if np.random.random() < probability:
+                if random.random() < probability:
                     task.collapse_state(TaskState.COLLAPSED)
                 else:
                     task.collapse_state(TaskState.FAILED)
