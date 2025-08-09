@@ -1,692 +1,516 @@
+
 """
-Advanced auto-scaling system with intelligent triggers and resource optimization.
+Auto-scaling and load balancing system for dynamic resource management.
 """
 
-import logging
 import time
 import threading
-from typing import Dict, Any, List, Optional, Callable
-from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
-from enum import Enum
-from collections import deque, defaultdict
+import logging
 import statistics
+from typing import Dict, List, Any, Optional, Callable, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from collections import deque, defaultdict
+from enum import Enum
 import json
-import asyncio
 
 
-class ScalingDirection(Enum):
-    """Scaling direction."""
-    UP = "up"
-    DOWN = "down"
-    NONE = "none"
-
-
-class ScalingStrategy(Enum):
-    """Scaling strategies."""
-    REACTIVE = "reactive"          # React to current load
-    PREDICTIVE = "predictive"      # Predict future load
-    SCHEDULED = "scheduled"        # Scale based on schedule
-    HYBRID = "hybrid"             # Combination of strategies
+class ScalingAction(Enum):
+    """Types of scaling actions."""
+    SCALE_UP = "scale_up"
+    SCALE_DOWN = "scale_down"
+    MAINTAIN = "maintain"
 
 
 class ResourceType(Enum):
     """Types of resources that can be scaled."""
-    COMPUTE_INSTANCES = "compute_instances"
-    WORKER_THREADS = "worker_threads"
-    CONNECTION_POOLS = "connection_pools"
+    THREAD_POOL = "thread_pool"
+    CONNECTION_POOL = "connection_pool"
+    PROCESS_POOL = "process_pool"
     CACHE_SIZE = "cache_size"
-    BATCH_SIZE = "batch_size"
-    CONCURRENCY_LIMIT = "concurrency_limit"
 
 
 @dataclass
 class ScalingMetric:
-    """Metric used for scaling decisions."""
+    """Metric for scaling decisions."""
     name: str
     current_value: float
-    threshold_scale_up: float
-    threshold_scale_down: float
-    weight: float = 1.0
-    aggregation_window_minutes: int = 5
-    stability_period_minutes: int = 2
-
-
-@dataclass
-class ScalingRule:
-    """Scaling rule definition."""
-    name: str
-    resource_type: ResourceType
-    strategy: ScalingStrategy
-    metrics: List[ScalingMetric]
-    min_capacity: int = 1
-    max_capacity: int = 100
-    scale_up_increment: int = 1
-    scale_down_increment: int = 1
-    cooldown_seconds: int = 300
-    enabled: bool = True
-
-
-@dataclass
-class ScalingAction:
-    """Scaling action record."""
-    action_id: str
-    resource_type: ResourceType
-    direction: ScalingDirection
-    from_capacity: int
-    to_capacity: int
-    trigger_metrics: Dict[str, float]
     timestamp: datetime
-    success: bool = True
-    error_message: Optional[str] = None
-    execution_time_ms: float = 0.0
+    resource_type: ResourceType
+    threshold_up: float = 80.0      # Scale up when above this
+    threshold_down: float = 30.0     # Scale down when below this
+    weight: float = 1.0             # Importance weight
 
 
 @dataclass
-class ResourceConfig:
-    """Current resource configuration."""
+class ScalingEvent:
+    """Record of a scaling event."""
+    timestamp: datetime
+    resource_name: str
     resource_type: ResourceType
-    current_capacity: int
-    target_capacity: int
-    last_scaling_action: Optional[datetime] = None
-    scaling_in_progress: bool = False
+    action: ScalingAction
+    old_size: int
+    new_size: int
+    trigger_metrics: List[ScalingMetric]
+    reason: str
 
 
-class AutoScaler:
-    """Advanced auto-scaling system with intelligent triggers."""
+class LoadBalancer:
+    """Intelligent load balancing for distributing work."""
     
-    def __init__(
-        self,
-        evaluation_interval: int = 30,
-        metric_retention_hours: int = 24,
-        enable_predictive_scaling: bool = True,
-        enable_cost_optimization: bool = True
-    ):
-        self.evaluation_interval = evaluation_interval
-        self.metric_retention_hours = metric_retention_hours
-        self.enable_predictive_scaling = enable_predictive_scaling
-        self.enable_cost_optimization = enable_cost_optimization
-        
+    def __init__(self):
+        self.backends: Dict[str, Dict[str, Any]] = {}
+        self.load_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
+        self.response_times: Dict[str, deque] = defaultdict(lambda: deque(maxlen=50))
+        self.failure_counts: Dict[str, int] = defaultdict(int)
+        self.lock = threading.RLock()
         self.logger = logging.getLogger(__name__)
-        
-        # Scaling rules and resources
-        self.scaling_rules: Dict[str, ScalingRule] = {}
-        self.resource_configs: Dict[ResourceType, ResourceConfig] = {}
-        
-        # Metrics storage
-        self.metrics_history: Dict[str, deque] = defaultdict(
-            lambda: deque(maxlen=int(metric_retention_hours * 60 / (evaluation_interval / 60)))
-        )
-        
-        # Scaling history
-        self.scaling_actions: deque = deque(maxlen=1000)
-        
-        # Predictive modeling
-        self.load_patterns: Dict[str, List[float]] = defaultdict(list)
-        self.seasonal_patterns: Dict[str, Dict[str, float]] = defaultdict(dict)
-        
-        # Control
-        self.scaling_enabled = False
-        self.scaler_thread: Optional[threading.Thread] = None
-        self._stop_scaling = threading.Event()
-        self._lock = threading.RLock()
-        
-        # Scaling callbacks
-        self.scaling_callbacks: Dict[ResourceType, Callable[[int, int], bool]] = {}
-        
-        # Load default scaling rules
-        self._load_default_scaling_rules()
     
-    def register_scaling_rule(self, rule: ScalingRule) -> None:
-        """Register a scaling rule."""
-        with self._lock:
-            self.scaling_rules[rule.name] = rule
-            
-            # Initialize resource config if not exists
-            if rule.resource_type not in self.resource_configs:
-                self.resource_configs[rule.resource_type] = ResourceConfig(
-                    resource_type=rule.resource_type,
-                    current_capacity=rule.min_capacity,
-                    target_capacity=rule.min_capacity
-                )
-            
-            self.logger.info(f"Registered scaling rule: {rule.name}")
+    def add_backend(
+        self,
+        name: str,
+        endpoint: str,
+        weight: int = 100,
+        max_connections: int = 100
+    ):
+        """Add backend server/resource."""
+        with self.lock:
+            self.backends[name] = {
+                "endpoint": endpoint,
+                "weight": weight,
+                "max_connections": max_connections,
+                "current_connections": 0,
+                "enabled": True,
+                "health_score": 100.0
+            }
+            self.logger.info(f"Added backend: {name}")
     
-    def register_scaling_callback(
-        self, 
-        resource_type: ResourceType, 
-        callback: Callable[[int, int], bool]
-    ) -> None:
-        """Register callback for scaling actions."""
-        self.scaling_callbacks[resource_type] = callback
-        self.logger.info(f"Registered scaling callback for {resource_type.value}")
+    def remove_backend(self, name: str):
+        """Remove backend server/resource."""
+        with self.lock:
+            if name in self.backends:
+                del self.backends[name]
+                self.load_history.pop(name, None)
+                self.response_times.pop(name, None)
+                self.failure_counts.pop(name, 0)
+                self.logger.info(f"Removed backend: {name}")
     
-    def start_scaling(self) -> None:
-        """Start auto-scaling."""
-        if self.scaling_enabled:
-            self.logger.warning("Auto-scaling is already running")
-            return
-        
-        self.scaling_enabled = True
-        self._stop_scaling.clear()
-        
-        self.scaler_thread = threading.Thread(
-            target=self._scaling_loop,
-            name="AutoScaler",
-            daemon=True
-        )
-        self.scaler_thread.start()
-        
-        self.logger.info("Auto-scaling started")
-    
-    def stop_scaling(self) -> None:
-        """Stop auto-scaling."""
-        if not self.scaling_enabled:
-            return
-        
-        self.scaling_enabled = False
-        self._stop_scaling.set()
-        
-        if self.scaler_thread and self.scaler_thread.is_alive():
-            self.scaler_thread.join(timeout=10)
-        
-        self.logger.info("Auto-scaling stopped")
-    
-    def record_metric(self, metric_name: str, value: float, timestamp: Optional[datetime] = None) -> None:
-        """Record a metric value."""
-        if timestamp is None:
-            timestamp = datetime.utcnow()
-        
-        with self._lock:
-            self.metrics_history[metric_name].append({
-                "value": value,
-                "timestamp": timestamp
-            })
-    
-    def _scaling_loop(self) -> None:
-        """Main scaling evaluation loop."""
-        while not self._stop_scaling.is_set():
-            try:
-                self._evaluate_scaling_rules()
-                self._update_load_patterns()
-                
-                if self.enable_predictive_scaling:
-                    self._run_predictive_scaling()
-                
-            except Exception as e:
-                self.logger.error(f"Error in scaling loop: {e}")
-            
-            # Wait for next evaluation
-            self._stop_scaling.wait(self.evaluation_interval)
-    
-    def _evaluate_scaling_rules(self) -> None:
-        """Evaluate all scaling rules and make scaling decisions."""
-        for rule_name, rule in list(self.scaling_rules.items()):
-            if not rule.enabled:
-                continue
-            
-            try:
-                self._evaluate_single_rule(rule)
-            except Exception as e:
-                self.logger.error(f"Error evaluating scaling rule {rule_name}: {e}")
-    
-    def _evaluate_single_rule(self, rule: ScalingRule) -> None:
-        """Evaluate a single scaling rule."""
-        resource_config = self.resource_configs.get(rule.resource_type)
-        if not resource_config:
-            return
-        
-        # Check cooldown period
-        if (resource_config.last_scaling_action and 
-            (datetime.utcnow() - resource_config.last_scaling_action).total_seconds() < rule.cooldown_seconds):
-            return
-        
-        # Skip if scaling already in progress
-        if resource_config.scaling_in_progress:
-            return
-        
-        # Collect current metric values
-        current_metrics = {}
-        scale_up_signals = 0
-        scale_down_signals = 0
-        total_weight = 0
-        
-        for metric in rule.metrics:
-            metric_value = self._get_aggregated_metric(
-                metric.name, 
-                metric.aggregation_window_minutes
-            )
-            
-            if metric_value is None:
-                continue
-            
-            current_metrics[metric.name] = metric_value
-            total_weight += metric.weight
-            
-            # Check thresholds
-            if metric_value >= metric.threshold_scale_up:
-                scale_up_signals += metric.weight
-            elif metric_value <= metric.threshold_scale_down:
-                scale_down_signals += metric.weight
-        
-        if total_weight == 0:
-            return
-        
-        # Determine scaling direction
-        scale_up_ratio = scale_up_signals / total_weight
-        scale_down_ratio = scale_down_signals / total_weight
-        
-        direction = ScalingDirection.NONE
-        if scale_up_ratio >= 0.5:  # Majority of weighted metrics suggest scale up
-            direction = ScalingDirection.UP
-        elif scale_down_ratio >= 0.7:  # Higher threshold for scale down
-            direction = ScalingDirection.DOWN
-        
-        # Execute scaling if needed
-        if direction != ScalingDirection.NONE:
-            self._execute_scaling(rule, resource_config, direction, current_metrics)
-    
-    def _get_aggregated_metric(self, metric_name: str, window_minutes: int) -> Optional[float]:
-        """Get aggregated metric value over time window."""
-        if metric_name not in self.metrics_history:
-            return None
-        
-        cutoff_time = datetime.utcnow() - timedelta(minutes=window_minutes)
-        recent_values = [
-            entry["value"] for entry in self.metrics_history[metric_name]
-            if entry["timestamp"] >= cutoff_time
-        ]
-        
-        if not recent_values:
-            return None
-        
-        # Use average for aggregation
-        return statistics.mean(recent_values)
-    
-    def _execute_scaling(
-        self, 
-        rule: ScalingRule, 
-        resource_config: ResourceConfig, 
-        direction: ScalingDirection,
-        trigger_metrics: Dict[str, float]
-    ) -> None:
-        """Execute scaling action."""
-        current_capacity = resource_config.current_capacity
-        
-        if direction == ScalingDirection.UP:
-            new_capacity = min(
-                current_capacity + rule.scale_up_increment,
-                rule.max_capacity
-            )
-        else:  # Scale down
-            new_capacity = max(
-                current_capacity - rule.scale_down_increment,
-                rule.min_capacity
-            )
-        
-        if new_capacity == current_capacity:
-            return  # No change needed
-        
-        # Create scaling action record
-        action_id = f"scale_{rule.resource_type.value}_{int(time.time())}"
-        action = ScalingAction(
-            action_id=action_id,
-            resource_type=rule.resource_type,
-            direction=direction,
-            from_capacity=current_capacity,
-            to_capacity=new_capacity,
-            trigger_metrics=trigger_metrics,
-            timestamp=datetime.utcnow()
-        )
-        
-        self.logger.info(
-            f"Scaling {rule.resource_type.value} from {current_capacity} to {new_capacity} "
-            f"({direction.value}) due to metrics: {trigger_metrics}"
-        )
-        
-        # Mark scaling in progress
-        resource_config.scaling_in_progress = True
-        resource_config.target_capacity = new_capacity
-        
-        # Execute scaling callback
-        success = True
-        error_message = None
-        start_time = time.time()
-        
-        try:
-            callback = self.scaling_callbacks.get(rule.resource_type)
-            if callback:
-                success = callback(current_capacity, new_capacity)
-            else:
-                self.logger.warning(f"No scaling callback registered for {rule.resource_type.value}")
-                success = False
-                error_message = "No scaling callback registered"
-                
-        except Exception as e:
-            success = False
-            error_message = str(e)
-            self.logger.error(f"Scaling callback failed: {e}")
-        
-        execution_time_ms = (time.time() - start_time) * 1000
-        
-        # Update action record
-        action.success = success
-        action.error_message = error_message
-        action.execution_time_ms = execution_time_ms
-        
-        # Update resource config
-        if success:
-            resource_config.current_capacity = new_capacity
-            resource_config.last_scaling_action = datetime.utcnow()
-        
-        resource_config.scaling_in_progress = False
-        
-        # Store action
-        with self._lock:
-            self.scaling_actions.append(action)
-    
-    def _update_load_patterns(self) -> None:
-        """Update load patterns for predictive scaling."""
-        if not self.enable_predictive_scaling:
-            return
-        
-        current_time = datetime.utcnow()
-        hour_of_day = current_time.hour
-        day_of_week = current_time.weekday()
-        
-        # Update hourly and daily patterns
-        for metric_name, history in self.metrics_history.items():
-            if not history:
-                continue
-            
-            recent_avg = statistics.mean([entry["value"] for entry in list(history)[-10:]])
-            
-            # Update hourly pattern
-            hourly_key = f"hour_{hour_of_day}"
-            if hourly_key not in self.seasonal_patterns[metric_name]:
-                self.seasonal_patterns[metric_name][hourly_key] = recent_avg
-            else:
-                # Exponential moving average
-                alpha = 0.1
-                self.seasonal_patterns[metric_name][hourly_key] = (
-                    alpha * recent_avg + 
-                    (1 - alpha) * self.seasonal_patterns[metric_name][hourly_key]
-                )
-            
-            # Update daily pattern
-            daily_key = f"day_{day_of_week}"
-            if daily_key not in self.seasonal_patterns[metric_name]:
-                self.seasonal_patterns[metric_name][daily_key] = recent_avg
-            else:
-                alpha = 0.05  # Slower adaptation for daily patterns
-                self.seasonal_patterns[metric_name][daily_key] = (
-                    alpha * recent_avg + 
-                    (1 - alpha) * self.seasonal_patterns[metric_name][daily_key]
-                )
-    
-    def _run_predictive_scaling(self) -> None:
-        """Run predictive scaling based on historical patterns."""
-        # Look ahead 15 minutes
-        future_time = datetime.utcnow() + timedelta(minutes=15)
-        
-        for rule_name, rule in self.scaling_rules.items():
-            if rule.strategy not in [ScalingStrategy.PREDICTIVE, ScalingStrategy.HYBRID]:
-                continue
-            
-            resource_config = self.resource_configs.get(rule.resource_type)
-            if not resource_config or resource_config.scaling_in_progress:
-                continue
-            
-            # Predict load for each metric
-            predicted_load = {}
-            for metric in rule.metrics:
-                prediction = self._predict_metric_value(metric.name, future_time)
-                if prediction is not None:
-                    predicted_load[metric.name] = prediction
-            
-            if not predicted_load:
-                continue
-            
-            # Check if predicted load would trigger scaling
-            scale_up_signals = 0
-            total_weight = 0
-            
-            for metric in rule.metrics:
-                if metric.name not in predicted_load:
-                    continue
-                
-                predicted_value = predicted_load[metric.name]
-                total_weight += metric.weight
-                
-                if predicted_value >= metric.threshold_scale_up:
-                    scale_up_signals += metric.weight
-            
-            if total_weight > 0 and scale_up_signals / total_weight >= 0.6:
-                self.logger.info(
-                    f"Predictive scaling triggered for {rule.resource_type.value}: "
-                    f"predicted load {predicted_load}"
-                )
-                
-                # Execute proactive scale up (smaller increment)
-                current_capacity = resource_config.current_capacity
-                new_capacity = min(
-                    current_capacity + max(1, rule.scale_up_increment // 2),
-                    rule.max_capacity
-                )
-                
-                if new_capacity > current_capacity:
-                    self._execute_scaling(
-                        rule, resource_config, ScalingDirection.UP,
-                        {f"predicted_{k}": v for k, v in predicted_load.items()}
-                    )
-    
-    def _predict_metric_value(self, metric_name: str, future_time: datetime) -> Optional[float]:
-        """Predict metric value at future time."""
-        if metric_name not in self.seasonal_patterns:
-            return None
-        
-        patterns = self.seasonal_patterns[metric_name]
-        
-        # Get seasonal factors
-        hour_key = f"hour_{future_time.hour}"
-        day_key = f"day_{future_time.weekday()}"
-        
-        hourly_factor = patterns.get(hour_key, 1.0)
-        daily_factor = patterns.get(day_key, 1.0)
-        
-        # Get recent baseline
-        if metric_name not in self.metrics_history or not self.metrics_history[metric_name]:
-            return None
-        
-        recent_values = [entry["value"] for entry in list(self.metrics_history[metric_name])[-20:]]
-        baseline = statistics.mean(recent_values)
-        
-        # Simple prediction: baseline * seasonal factors
-        prediction = baseline * (hourly_factor / baseline) * 0.7 + baseline * (daily_factor / baseline) * 0.3
-        
-        return max(0, prediction)
-    
-    def force_scaling(
-        self, 
-        resource_type: ResourceType, 
-        target_capacity: int,
-        reason: str = "Manual scaling"
-    ) -> bool:
-        """Force scaling to specific capacity."""
-        resource_config = self.resource_configs.get(resource_type)
-        if not resource_config:
-            return False
-        
-        current_capacity = resource_config.current_capacity
-        direction = ScalingDirection.UP if target_capacity > current_capacity else ScalingDirection.DOWN
-        
-        # Create manual scaling action
-        action = ScalingAction(
-            action_id=f"manual_scale_{resource_type.value}_{int(time.time())}",
-            resource_type=resource_type,
-            direction=direction,
-            from_capacity=current_capacity,
-            to_capacity=target_capacity,
-            trigger_metrics={"manual_reason": reason},
-            timestamp=datetime.utcnow()
-        )
-        
-        # Execute callback
-        success = True
-        try:
-            callback = self.scaling_callbacks.get(resource_type)
-            if callback:
-                success = callback(current_capacity, target_capacity)
-            
-            if success:
-                resource_config.current_capacity = target_capacity
-                resource_config.last_scaling_action = datetime.utcnow()
-            
-        except Exception as e:
-            success = False
-            action.error_message = str(e)
-        
-        action.success = success
-        
-        with self._lock:
-            self.scaling_actions.append(action)
-        
-        self.logger.info(
-            f"Manual scaling {resource_type.value} from {current_capacity} to {target_capacity}: "
-            f"{'success' if success else 'failed'}"
-        )
-        
-        return success
-    
-    def get_scaling_stats(self) -> Dict[str, Any]:
-        """Get scaling statistics."""
-        with self._lock:
-            total_actions = len(self.scaling_actions)
-            successful_actions = sum(1 for action in self.scaling_actions if action.success)
-            
-            recent_actions = [
-                action for action in self.scaling_actions
-                if action.timestamp >= datetime.utcnow() - timedelta(hours=24)
+    def select_backend(self, strategy: str = "weighted_round_robin") -> Optional[str]:
+        """Select best backend based on strategy."""
+        with self.lock:
+            available_backends = [
+                name for name, info in self.backends.items()
+                if info["enabled"] and info["current_connections"] < info["max_connections"]
             ]
             
-            resource_status = {}
-            for resource_type, config in self.resource_configs.items():
-                resource_status[resource_type.value] = {
-                    "current_capacity": config.current_capacity,
-                    "target_capacity": config.target_capacity,
-                    "scaling_in_progress": config.scaling_in_progress,
-                    "last_scaling_action": config.last_scaling_action.isoformat() if config.last_scaling_action else None
+            if not available_backends:
+                return None
+            
+            if strategy == "weighted_round_robin":
+                return self._weighted_round_robin(available_backends)
+            elif strategy == "least_connections":
+                return self._least_connections(available_backends)
+            elif strategy == "response_time":
+                return self._fastest_response(available_backends)
+            elif strategy == "health_score":
+                return self._best_health(available_backends)
+            else:
+                # Default to round robin
+                return available_backends[0]
+    
+    def _weighted_round_robin(self, backends: List[str]) -> str:
+        """Weighted round robin selection."""
+        total_weight = sum(self.backends[name]["weight"] for name in backends)
+        if total_weight == 0:
+            return backends[0]
+        
+        # Simple implementation - can be improved with better round robin
+        weights = [(name, self.backends[name]["weight"]) for name in backends]
+        weights.sort(key=lambda x: x[1], reverse=True)
+        
+        # For simplicity, return highest weight backend
+        # In production, implement proper weighted round robin
+        return weights[0][0]
+    
+    def _least_connections(self, backends: List[str]) -> str:
+        """Least connections selection."""
+        return min(backends, key=lambda name: self.backends[name]["current_connections"])
+    
+    def _fastest_response(self, backends: List[str]) -> str:
+        """Fastest average response time selection."""
+        best_backend = backends[0]
+        best_avg_time = float('inf')
+        
+        for name in backends:
+            if name in self.response_times and self.response_times[name]:
+                avg_time = statistics.mean(self.response_times[name])
+                if avg_time < best_avg_time:
+                    best_avg_time = avg_time
+                    best_backend = name
+        
+        return best_backend
+    
+    def _best_health(self, backends: List[str]) -> str:
+        """Best health score selection."""
+        return max(backends, key=lambda name: self.backends[name]["health_score"])
+    
+    def record_request(self, backend_name: str, response_time: float, success: bool):
+        """Record request metrics for a backend."""
+        with self.lock:
+            if backend_name not in self.backends:
+                return
+            
+            # Record response time
+            self.response_times[backend_name].append(response_time)
+            
+            # Record load
+            current_time = time.time()
+            self.load_history[backend_name].append(current_time)
+            
+            # Update failure count
+            if not success:
+                self.failure_counts[backend_name] += 1
+            else:
+                # Reset failure count on success
+                self.failure_counts[backend_name] = max(0, self.failure_counts[backend_name] - 1)
+            
+            # Update health score
+            self._update_health_score(backend_name)
+    
+    def _update_health_score(self, backend_name: str):
+        """Update health score based on recent performance."""
+        if backend_name not in self.backends:
+            return
+        
+        health_score = 100.0
+        
+        # Factor in failure rate
+        failure_rate = self.failure_counts[backend_name] / max(1, len(self.response_times[backend_name]))
+        health_score -= failure_rate * 50  # Penalize failures heavily
+        
+        # Factor in response time
+        if self.response_times[backend_name]:
+            avg_response_time = statistics.mean(self.response_times[backend_name])
+            if avg_response_time > 1.0:  # Penalize slow responses
+                health_score -= min(30, avg_response_time * 10)
+        
+        # Factor in current load
+        current_load = self.backends[backend_name]["current_connections"]
+        max_load = self.backends[backend_name]["max_connections"]
+        load_ratio = current_load / max_load if max_load > 0 else 0
+        health_score -= load_ratio * 20  # Penalize high load
+        
+        self.backends[backend_name]["health_score"] = max(0, min(100, health_score))
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get load balancer statistics."""
+        with self.lock:
+            backend_stats = {}
+            for name, info in self.backends.items():
+                avg_response_time = 0
+                if self.response_times[name]:
+                    avg_response_time = statistics.mean(self.response_times[name])
+                
+                # Calculate recent request rate
+                now = time.time()
+                recent_requests = [
+                    t for t in self.load_history[name]
+                    if now - t < 60  # Last minute
+                ]
+                request_rate = len(recent_requests) / 60.0
+                
+                backend_stats[name] = {
+                    "enabled": info["enabled"],
+                    "current_connections": info["current_connections"],
+                    "max_connections": info["max_connections"],
+                    "health_score": info["health_score"],
+                    "avg_response_time": avg_response_time,
+                    "failure_count": self.failure_counts[name],
+                    "request_rate": request_rate
                 }
             
             return {
-                "scaling_enabled": self.scaling_enabled,
-                "total_scaling_actions": total_actions,
-                "successful_actions": successful_actions,
-                "success_rate": successful_actions / max(total_actions, 1),
-                "recent_actions_24h": len(recent_actions),
-                "resource_status": resource_status,
-                "active_rules": len([r for r in self.scaling_rules.values() if r.enabled]),
-                "predictive_scaling_enabled": self.enable_predictive_scaling
+                "backends": backend_stats,
+                "total_backends": len(self.backends),
+                "healthy_backends": len([
+                    name for name, info in self.backends.items()
+                    if info["enabled"] and info["health_score"] > 50
+                ])
             }
+
+
+class AutoScaler:
+    """Automatic resource scaling based on metrics and policies."""
     
-    def get_recent_actions(self, hours: int = 24) -> List[Dict[str, Any]]:
-        """Get recent scaling actions."""
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+    def __init__(self, scale_up_cooldown: int = 300, scale_down_cooldown: int = 600):
+        self.scale_up_cooldown = scale_up_cooldown    # 5 minutes
+        self.scale_down_cooldown = scale_down_cooldown  # 10 minutes
         
-        with self._lock:
-            recent_actions = [
-                asdict(action) for action in self.scaling_actions
-                if action.timestamp >= cutoff_time
-            ]
+        self.metrics: Dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
+        self.scaling_policies: Dict[str, Dict[str, Any]] = {}
+        self.last_scaling_events: Dict[str, datetime] = {}
+        self.scaling_history: List[ScalingEvent] = []
         
-        return recent_actions
+        self.lock = threading.RLock()
+        self.logger = logging.getLogger(__name__)
+        
+        # Start monitoring thread
+        self.monitoring_active = False
+        self._start_monitoring()
     
-    def _load_default_scaling_rules(self) -> None:
-        """Load default scaling rules."""
+    def add_scaling_policy(
+        self,
+        resource_name: str,
+        resource_type: ResourceType,
+        min_size: int = 1,
+        max_size: int = 20,
+        target_metrics: List[Tuple[str, float, float]] = None,  # name, scale_up, scale_down
+        scale_up_step: int = 1,
+        scale_down_step: int = 1,
+        resource_controller: Optional[Callable] = None
+    ):
+        """Add auto-scaling policy for a resource."""
+        target_metrics = target_metrics or [("utilization", 80.0, 30.0)]
         
-        # CPU-based scaling for compute instances
-        cpu_rule = ScalingRule(
-            name="cpu_scaling",
-            resource_type=ResourceType.COMPUTE_INSTANCES,
-            strategy=ScalingStrategy.HYBRID,
-            metrics=[
-                ScalingMetric(
-                    name="cpu_usage_percent",
-                    current_value=0.0,
-                    threshold_scale_up=75.0,
-                    threshold_scale_down=25.0,
-                    weight=1.0,
-                    aggregation_window_minutes=5
-                )
-            ],
-            min_capacity=1,
-            max_capacity=20,
-            scale_up_increment=2,
-            scale_down_increment=1,
-            cooldown_seconds=300
+        policy = {
+            "resource_type": resource_type,
+            "min_size": min_size,
+            "max_size": max_size,
+            "current_size": min_size,
+            "target_metrics": target_metrics,
+            "scale_up_step": scale_up_step,
+            "scale_down_step": scale_down_step,
+            "resource_controller": resource_controller
+        }
+        
+        with self.lock:
+            self.scaling_policies[resource_name] = policy
+            self.logger.info(f"Added scaling policy for {resource_name}")
+    
+    def record_metric(self, resource_name: str, metric_name: str, value: float):
+        """Record metric for scaling decisions."""
+        with self.lock:
+            key = f"{resource_name}:{metric_name}"
+            metric = ScalingMetric(
+                name=metric_name,
+                current_value=value,
+                timestamp=datetime.utcnow(),
+                resource_type=self.scaling_policies.get(resource_name, {}).get("resource_type", ResourceType.THREAD_POOL)
+            )
+            self.metrics[key].append(metric)
+    
+    def evaluate_scaling(self, resource_name: str) -> ScalingAction:
+        """Evaluate if resource needs scaling."""
+        if resource_name not in self.scaling_policies:
+            return ScalingAction.MAINTAIN
+        
+        policy = self.scaling_policies[resource_name]
+        current_size = policy["current_size"]
+        
+        # Check cooldown periods
+        last_event = self.last_scaling_events.get(resource_name)
+        if last_event:
+            time_since_last = (datetime.utcnow() - last_event).total_seconds()
+            if time_since_last < self.scale_up_cooldown:
+                return ScalingAction.MAINTAIN
+        
+        # Collect recent metrics
+        scale_up_votes = 0
+        scale_down_votes = 0
+        trigger_metrics = []
+        
+        for metric_name, up_threshold, down_threshold in policy["target_metrics"]:
+            key = f"{resource_name}:{metric_name}"
+            recent_metrics = list(self.metrics[key])[-10:]  # Last 10 readings
+            
+            if not recent_metrics:
+                continue
+            
+            # Calculate average of recent metrics
+            avg_value = sum(m.current_value for m in recent_metrics) / len(recent_metrics)
+            
+            latest_metric = recent_metrics[-1]
+            latest_metric.threshold_up = up_threshold
+            latest_metric.threshold_down = down_threshold
+            trigger_metrics.append(latest_metric)
+            
+            # Vote for scaling action
+            if avg_value > up_threshold and current_size < policy["max_size"]:
+                scale_up_votes += 1
+            elif avg_value < down_threshold and current_size > policy["min_size"]:
+                scale_down_votes += 1
+        
+        # Determine action based on votes
+        if scale_up_votes > 0:
+            return ScalingAction.SCALE_UP
+        elif scale_down_votes > 0:
+            # More conservative on scaling down
+            if scale_down_votes >= len(policy["target_metrics"]) / 2:
+                return ScalingAction.SCALE_DOWN
+        
+        return ScalingAction.MAINTAIN
+    
+    def execute_scaling(self, resource_name: str, action: ScalingAction) -> bool:
+        """Execute scaling action."""
+        if resource_name not in self.scaling_policies:
+            return False
+        
+        policy = self.scaling_policies[resource_name]
+        old_size = policy["current_size"]
+        new_size = old_size
+        
+        if action == ScalingAction.SCALE_UP:
+            new_size = min(policy["max_size"], old_size + policy["scale_up_step"])
+        elif action == ScalingAction.SCALE_DOWN:
+            new_size = max(policy["min_size"], old_size - policy["scale_down_step"])
+        else:
+            return False  # No change needed
+        
+        if new_size == old_size:
+            return False  # No change possible
+        
+        # Execute scaling using resource controller
+        if policy["resource_controller"]:
+            try:
+                success = policy["resource_controller"](resource_name, new_size)
+                if not success:
+                    return False
+            except Exception as e:
+                self.logger.error(f"Scaling execution failed for {resource_name}: {e}")
+                return False
+        
+        # Update policy and record event
+        with self.lock:
+            policy["current_size"] = new_size
+            self.last_scaling_events[resource_name] = datetime.utcnow()
+            
+            # Collect trigger metrics
+            trigger_metrics = []
+            for metric_name, up_threshold, down_threshold in policy["target_metrics"]:
+                key = f"{resource_name}:{metric_name}"
+                if self.metrics[key]:
+                    trigger_metrics.append(self.metrics[key][-1])
+            
+            event = ScalingEvent(
+                timestamp=datetime.utcnow(),
+                resource_name=resource_name,
+                resource_type=policy["resource_type"],
+                action=action,
+                old_size=old_size,
+                new_size=new_size,
+                trigger_metrics=trigger_metrics,
+                reason=f"Automated scaling: {action.value}"
+            )
+            
+            self.scaling_history.append(event)
+            
+            # Keep history limited
+            if len(self.scaling_history) > 1000:
+                self.scaling_history = self.scaling_history[-500:]
+        
+        self.logger.info(f"Scaled {resource_name} from {old_size} to {new_size} ({action.value})")
+        return True
+    
+    def _start_monitoring(self):
+        """Start background monitoring thread."""
+        if self.monitoring_active:
+            return
+        
+        self.monitoring_active = True
+        monitor_thread = threading.Thread(target=self._monitoring_loop, daemon=True)
+        monitor_thread.start()
+    
+    def _monitoring_loop(self):
+        """Main monitoring and scaling loop."""
+        while self.monitoring_active:
+            try:
+                with self.lock:
+                    for resource_name in list(self.scaling_policies.keys()):
+                        action = self.evaluate_scaling(resource_name)
+                        if action != ScalingAction.MAINTAIN:
+                            self.execute_scaling(resource_name, action)
+                
+                time.sleep(30)  # Check every 30 seconds
+                
+            except Exception as e:
+                self.logger.error(f"Auto-scaling monitoring error: {e}")
+                time.sleep(60)  # Back off on errors
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get auto-scaling statistics."""
+        with self.lock:
+            policy_stats = {}
+            for name, policy in self.scaling_policies.items():
+                recent_events = [
+                    e for e in self.scaling_history
+                    if e.resource_name == name and 
+                    (datetime.utcnow() - e.timestamp).total_seconds() < 86400  # Last 24h
+                ]
+                
+                policy_stats[name] = {
+                    "current_size": policy["current_size"],
+                    "min_size": policy["min_size"],
+                    "max_size": policy["max_size"],
+                    "resource_type": policy["resource_type"].value,
+                    "events_24h": len(recent_events),
+                    "last_scaling": self.last_scaling_events.get(name)
+                }
+            
+            return {
+                "policies": policy_stats,
+                "total_scaling_events": len(self.scaling_history),
+                "monitoring_active": self.monitoring_active
+            }
+
+
+class ResourceManager:
+    """Integrated resource management with scaling and load balancing."""
+    
+    def __init__(self):
+        self.auto_scaler = AutoScaler()
+        self.load_balancer = LoadBalancer()
+        self.logger = logging.getLogger(__name__)
+    
+    def register_scalable_resource(
+        self,
+        name: str,
+        resource_type: ResourceType,
+        controller: Callable,
+        **scaling_config
+    ):
+        """Register a resource for auto-scaling."""
+        self.auto_scaler.add_scaling_policy(
+            resource_name=name,
+            resource_type=resource_type,
+            resource_controller=controller,
+            **scaling_config
         )
-        
-        # Memory-based scaling
-        memory_rule = ScalingRule(
-            name="memory_scaling", 
-            resource_type=ResourceType.COMPUTE_INSTANCES,
-            strategy=ScalingStrategy.REACTIVE,
-            metrics=[
-                ScalingMetric(
-                    name="memory_usage_percent",
-                    current_value=0.0,
-                    threshold_scale_up=80.0,
-                    threshold_scale_down=30.0,
-                    weight=0.8
-                )
-            ],
-            min_capacity=1,
-            max_capacity=15,
-            cooldown_seconds=180
-        )
-        
-        # Request rate-based scaling
-        request_rate_rule = ScalingRule(
-            name="request_rate_scaling",
-            resource_type=ResourceType.WORKER_THREADS,
-            strategy=ScalingStrategy.PREDICTIVE,
-            metrics=[
-                ScalingMetric(
-                    name="requests_per_second",
-                    current_value=0.0,
-                    threshold_scale_up=100.0,
-                    threshold_scale_down=20.0,
-                    weight=1.0,
-                    aggregation_window_minutes=3
-                ),
-                ScalingMetric(
-                    name="avg_response_time_ms",
-                    current_value=0.0,
-                    threshold_scale_up=5000.0,  # 5 seconds
-                    threshold_scale_down=1000.0,  # 1 second
-                    weight=0.6
-                )
-            ],
-            min_capacity=5,
-            max_capacity=50,
-            scale_up_increment=5,
-            scale_down_increment=2,
-            cooldown_seconds=120
-        )
-        
-        # Register default rules
-        self.register_scaling_rule(cpu_rule)
-        self.register_scaling_rule(memory_rule)
-        self.register_scaling_rule(request_rate_rule)
+    
+    def register_load_balanced_backend(self, name: str, endpoint: str, **config):
+        """Register a backend for load balancing."""
+        self.load_balancer.add_backend(name, endpoint, **config)
+    
+    def record_resource_metrics(self, resource_name: str, metrics: Dict[str, float]):
+        """Record metrics for resource scaling decisions."""
+        for metric_name, value in metrics.items():
+            self.auto_scaler.record_metric(resource_name, metric_name, value)
+    
+    def record_backend_request(self, backend_name: str, response_time: float, success: bool):
+        """Record backend request for load balancing decisions."""
+        self.load_balancer.record_request(backend_name, response_time, success)
+    
+    def select_backend(self, strategy: str = "weighted_round_robin") -> Optional[str]:
+        """Select best backend for request."""
+        return self.load_balancer.select_backend(strategy)
+    
+    def get_comprehensive_stats(self) -> Dict[str, Any]:
+        """Get comprehensive resource management statistics."""
+        return {
+            "auto_scaling": self.auto_scaler.get_stats(),
+            "load_balancing": self.load_balancer.get_stats(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
 
-# Global auto-scaler instance
-auto_scaler = AutoScaler()
-
-
-def register_resource_scaler(
-    resource_type: ResourceType,
-    scaling_callback: Callable[[int, int], bool]
-) -> None:
-    """Register a resource scaling callback."""
-    auto_scaler.register_scaling_callback(resource_type, scaling_callback)
+# Global resource manager
+global_resource_manager = ResourceManager()

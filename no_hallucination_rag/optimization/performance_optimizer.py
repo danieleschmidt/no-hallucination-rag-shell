@@ -1,584 +1,595 @@
+
 """
-Performance optimization and auto-tuning for RAG system.
+Advanced performance optimization system with adaptive tuning.
 """
 
-import logging
 import time
+import threading
+import logging
 import statistics
-from typing import Dict, Any, List, Optional, Tuple, Callable
+import psutil
+from typing import Dict, List, Any, Optional, Callable, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import deque, defaultdict
-import threading
+from abc import ABC, abstractmethod
 import json
-import os
+import numpy as np
 
 
 @dataclass
 class PerformanceMetric:
-    """Performance metric with timestamp."""
+    """Performance metric data point."""
     name: str
     value: float
     timestamp: datetime
-    labels: Dict[str, str] = field(default_factory=dict)
-
-
-@dataclass
-class OptimizationSuggestion:
-    """Optimization suggestion with confidence score."""
     component: str
-    parameter: str
-    current_value: Any
-    suggested_value: Any
-    reason: str
-    confidence: float
-    estimated_improvement: float
+    operation: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class PerformanceProfile:
-    """Performance profile for a specific workload."""
-    workload_type: str
-    query_patterns: List[str]
-    avg_response_time: float
-    avg_factuality_score: float
-    avg_source_count: float
-    throughput_qps: float
-    resource_usage: Dict[str, float]
-    optimization_suggestions: List[OptimizationSuggestion]
+class OptimizationResult:
+    """Result of performance optimization."""
+    parameter_name: str
+    old_value: Any
+    new_value: Any
+    improvement: float
+    confidence: float
+    applied: bool = False
 
 
-class PerformanceOptimizer:
-    """Automatically tunes RAG system performance based on usage patterns."""
+class PerformanceOptimizer(ABC):
+    """Abstract base class for performance optimizers."""
     
-    def __init__(
-        self,
-        monitoring_window_minutes: int = 60,
-        optimization_interval_minutes: int = 30,
-        min_samples_for_optimization: int = 100
-    ):
-        self.monitoring_window = timedelta(minutes=monitoring_window_minutes)
-        self.optimization_interval = timedelta(minutes=optimization_interval_minutes)
-        self.min_samples = min_samples_for_optimization
-        
-        # Performance data storage
-        self.metrics: deque = deque(maxlen=10000)
-        self.performance_history: List[PerformanceProfile] = []
-        
-        # Optimization state
-        self.last_optimization = datetime.utcnow()
-        self.current_parameters: Dict[str, Any] = {}
-        self.parameter_history: Dict[str, List[Tuple[datetime, Any]]] = defaultdict(list)
-        
-        # Thread safety
-        self._lock = threading.Lock()
-        
-        # Background optimization
-        self._optimization_thread = None
-        self._stop_optimization = threading.Event()
-        
+    @abstractmethod
+    def optimize(self, metrics: List[PerformanceMetric]) -> List[OptimizationResult]:
+        """Optimize based on performance metrics."""
+        pass
+    
+    @abstractmethod
+    def get_parameters(self) -> Dict[str, Any]:
+        """Get current optimization parameters."""
+        pass
+    
+    @abstractmethod
+    def apply_parameters(self, parameters: Dict[str, Any]) -> bool:
+        """Apply optimization parameters."""
+        pass
+
+
+class CacheOptimizer(PerformanceOptimizer):
+    """Optimizer for cache parameters."""
+    
+    def __init__(self, cache_manager):
+        self.cache_manager = cache_manager
         self.logger = logging.getLogger(__name__)
         
-        # Initialize default parameters
-        self._initialize_default_parameters()
-    
-    def _initialize_default_parameters(self) -> None:
-        """Initialize default performance parameters."""
-        self.current_parameters = {
-            # Retrieval parameters
-            'retrieval_top_k': 20,
-            'retrieval_timeout': 5.0,
-            'retrieval_batch_size': 10,
-            
-            # Ranking parameters
-            'ranking_factors': {
-                'relevance': 0.3,
-                'recency': 0.2,
-                'authority': 0.3,
-                'consistency': 0.2
-            },
-            
-            # Factuality parameters
-            'factuality_threshold': 0.95,
-            'factuality_ensemble_size': 3,
-            'factuality_timeout': 10.0,
-            
-            # Caching parameters
-            'cache_ttl_queries': 1800,  # 30 minutes
-            'cache_ttl_retrieval': 7200,  # 2 hours
-            'cache_max_size': 1000,
-            
-            # Concurrency parameters
-            'max_concurrent_queries': 10,
-            'max_concurrent_retrievals': 5,
-            'thread_pool_size': 8,
-            
-            # Generation parameters
-            'max_answer_length': 2000,
-            'generation_timeout': 15.0
+        # Optimization parameters with ranges
+        self.parameter_ranges = {
+            "l1_size": (100, 10000),
+            "l2_size": (1000, 100000),
+            "l3_size": (10000, 1000000),
+            "eviction_threshold": (0.7, 0.95)
+        }
+        
+        # Current parameters
+        self.parameters = {
+            "l1_size": 1000,
+            "l2_size": 10000,
+            "l3_size": 100000,
+            "eviction_threshold": 0.8
         }
     
-    def record_metric(
-        self,
-        name: str,
-        value: float,
-        labels: Optional[Dict[str, str]] = None
-    ) -> None:
+    def optimize(self, metrics: List[PerformanceMetric]) -> List[OptimizationResult]:
+        """Optimize cache parameters based on hit rates and response times."""
+        results = []
+        
+        # Filter cache-related metrics
+        cache_metrics = [m for m in metrics if m.component == "cache"]
+        
+        if not cache_metrics:
+            return results
+        
+        # Calculate average hit rate
+        hit_rate_metrics = [m for m in cache_metrics if m.name == "hit_rate"]
+        if hit_rate_metrics:
+            avg_hit_rate = statistics.mean(m.value for m in hit_rate_metrics)
+            
+            # If hit rate is low, increase cache sizes
+            if avg_hit_rate < 0.7:  # Less than 70% hit rate
+                for size_param in ["l1_size", "l2_size", "l3_size"]:
+                    old_value = self.parameters[size_param]
+                    min_val, max_val = self.parameter_ranges[size_param]
+                    new_value = min(max_val, int(old_value * 1.2))  # Increase by 20%
+                    
+                    if new_value != old_value:
+                        improvement = (new_value - old_value) / old_value
+                        confidence = min(0.8, (0.7 - avg_hit_rate) * 2)  # Higher confidence for lower hit rates
+                        
+                        results.append(OptimizationResult(
+                            parameter_name=size_param,
+                            old_value=old_value,
+                            new_value=new_value,
+                            improvement=improvement,
+                            confidence=confidence
+                        ))
+            
+            # If hit rate is very high, we might be over-caching
+            elif avg_hit_rate > 0.95:
+                # Consider slightly reducing cache sizes to free memory
+                for size_param in ["l3_size", "l2_size"]:  # Start with larger caches
+                    old_value = self.parameters[size_param]
+                    min_val, max_val = self.parameter_ranges[size_param]
+                    new_value = max(min_val, int(old_value * 0.9))  # Reduce by 10%
+                    
+                    if new_value != old_value:
+                        improvement = 0.1  # Small improvement in memory usage
+                        confidence = 0.3   # Low confidence for reduction
+                        
+                        results.append(OptimizationResult(
+                            parameter_name=size_param,
+                            old_value=old_value,
+                            new_value=new_value,
+                            improvement=improvement,
+                            confidence=confidence
+                        ))
+                        break  # Only adjust one parameter at a time
+        
+        # Optimize eviction threshold based on memory pressure
+        memory_usage = psutil.virtual_memory().percent
+        if memory_usage > 85:  # High memory pressure
+            old_threshold = self.parameters["eviction_threshold"]
+            new_threshold = max(0.7, old_threshold - 0.1)
+            
+            if new_threshold != old_threshold:
+                results.append(OptimizationResult(
+                    parameter_name="eviction_threshold",
+                    old_value=old_threshold,
+                    new_value=new_threshold,
+                    improvement=0.15,  # Memory reduction benefit
+                    confidence=0.7
+                ))
+        
+        return results
+    
+    def get_parameters(self) -> Dict[str, Any]:
+        """Get current cache parameters."""
+        return self.parameters.copy()
+    
+    def apply_parameters(self, parameters: Dict[str, Any]) -> bool:
+        """Apply cache parameters."""
+        try:
+            # Update internal parameters
+            for key, value in parameters.items():
+                if key in self.parameters:
+                    self.parameters[key] = value
+            
+            # Apply to cache manager (implementation depends on cache manager API)
+            if hasattr(self.cache_manager, 'update_parameters'):
+                self.cache_manager.update_parameters(parameters)
+                return True
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to apply cache parameters: {e}")
+            return False
+
+
+class ConcurrencyOptimizer(PerformanceOptimizer):
+    """Optimizer for concurrency parameters."""
+    
+    def __init__(self, concurrency_manager):
+        self.concurrency_manager = concurrency_manager
+        self.logger = logging.getLogger(__name__)
+        
+        self.parameter_ranges = {
+            "thread_pool_size": (1, 50),
+            "connection_pool_size": (5, 100),
+            "queue_size": (100, 10000),
+            "batch_size": (1, 100)
+        }
+        
+        self.parameters = {
+            "thread_pool_size": 10,
+            "connection_pool_size": 20,
+            "queue_size": 1000,
+            "batch_size": 10
+        }
+    
+    def optimize(self, metrics: List[PerformanceMetric]) -> List[OptimizationResult]:
+        """Optimize concurrency parameters based on utilization and throughput."""
+        results = []
+        
+        # Filter concurrency-related metrics
+        concurrency_metrics = [m for m in metrics if m.component in ["thread_pool", "connection_pool", "queue"]]
+        
+        if not concurrency_metrics:
+            return results
+        
+        # Optimize thread pool size based on utilization
+        thread_metrics = [m for m in concurrency_metrics if m.component == "thread_pool"]
+        if thread_metrics:
+            utilization_metrics = [m for m in thread_metrics if m.name == "utilization"]
+            if utilization_metrics:
+                avg_utilization = statistics.mean(m.value for m in utilization_metrics)
+                
+                if avg_utilization > 0.85:  # High utilization - scale up
+                    old_size = self.parameters["thread_pool_size"]
+                    min_val, max_val = self.parameter_ranges["thread_pool_size"]
+                    new_size = min(max_val, int(old_size * 1.3))  # Increase by 30%
+                    
+                    if new_size != old_size:
+                        improvement = (new_size - old_size) / old_size
+                        confidence = min(0.8, (avg_utilization - 0.85) * 4)
+                        
+                        results.append(OptimizationResult(
+                            parameter_name="thread_pool_size",
+                            old_value=old_size,
+                            new_value=new_size,
+                            improvement=improvement,
+                            confidence=confidence
+                        ))
+                
+                elif avg_utilization < 0.3:  # Low utilization - scale down
+                    old_size = self.parameters["thread_pool_size"]
+                    min_val, max_val = self.parameter_ranges["thread_pool_size"]
+                    new_size = max(min_val, int(old_size * 0.8))  # Decrease by 20%
+                    
+                    if new_size != old_size:
+                        improvement = 0.1  # Resource efficiency improvement
+                        confidence = 0.5   # Lower confidence for scaling down
+                        
+                        results.append(OptimizationResult(
+                            parameter_name="thread_pool_size",
+                            old_value=old_size,
+                            new_value=new_size,
+                            improvement=improvement,
+                            confidence=confidence
+                        ))
+        
+        # Optimize connection pool size based on connection pressure
+        connection_metrics = [m for m in concurrency_metrics if m.component == "connection_pool"]
+        if connection_metrics:
+            pressure_metrics = [m for m in connection_metrics if m.name == "connection_pressure"]
+            if pressure_metrics:
+                avg_pressure = statistics.mean(m.value for m in pressure_metrics)
+                
+                if avg_pressure > 0.8:  # High pressure - increase pool
+                    old_size = self.parameters["connection_pool_size"]
+                    min_val, max_val = self.parameter_ranges["connection_pool_size"]
+                    new_size = min(max_val, int(old_size * 1.25))  # Increase by 25%
+                    
+                    if new_size != old_size:
+                        improvement = (new_size - old_size) / old_size
+                        confidence = min(0.7, (avg_pressure - 0.8) * 3)
+                        
+                        results.append(OptimizationResult(
+                            parameter_name="connection_pool_size",
+                            old_value=old_size,
+                            new_value=new_size,
+                            improvement=improvement,
+                            confidence=confidence
+                        ))
+        
+        return results
+    
+    def get_parameters(self) -> Dict[str, Any]:
+        """Get current concurrency parameters."""
+        return self.parameters.copy()
+    
+    def apply_parameters(self, parameters: Dict[str, Any]) -> bool:
+        """Apply concurrency parameters."""
+        try:
+            for key, value in parameters.items():
+                if key in self.parameters:
+                    self.parameters[key] = value
+            
+            # Apply to concurrency manager
+            if hasattr(self.concurrency_manager, 'update_parameters'):
+                self.concurrency_manager.update_parameters(parameters)
+                return True
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to apply concurrency parameters: {e}")
+            return False
+
+
+class SystemOptimizer(PerformanceOptimizer):
+    """Optimizer for system-level parameters."""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        
+        self.parameter_ranges = {
+            "gc_threshold": (100, 10000),
+            "buffer_size": (1024, 1024*1024),
+            "timeout_seconds": (1, 300)
+        }
+        
+        self.parameters = {
+            "gc_threshold": 1000,
+            "buffer_size": 8192,
+            "timeout_seconds": 30
+        }
+    
+    def optimize(self, metrics: List[PerformanceMetric]) -> List[OptimizationResult]:
+        """Optimize system parameters based on overall performance."""
+        results = []
+        
+        # Get system metrics
+        cpu_usage = psutil.cpu_percent(interval=0.1)
+        memory_usage = psutil.virtual_memory().percent
+        
+        # Optimize based on resource usage
+        if cpu_usage > 80:  # High CPU usage
+            # Reduce GC frequency to save CPU
+            old_threshold = self.parameters["gc_threshold"]
+            min_val, max_val = self.parameter_ranges["gc_threshold"]
+            new_threshold = min(max_val, int(old_threshold * 1.5))
+            
+            if new_threshold != old_threshold:
+                results.append(OptimizationResult(
+                    parameter_name="gc_threshold",
+                    old_value=old_threshold,
+                    new_value=new_threshold,
+                    improvement=0.1,  # CPU reduction benefit
+                    confidence=0.6
+                ))
+        
+        if memory_usage > 85:  # High memory usage
+            # Increase GC frequency to free memory
+            old_threshold = self.parameters["gc_threshold"]
+            min_val, max_val = self.parameter_ranges["gc_threshold"]
+            new_threshold = max(min_val, int(old_threshold * 0.7))
+            
+            if new_threshold != old_threshold:
+                results.append(OptimizationResult(
+                    parameter_name="gc_threshold",
+                    old_value=old_threshold,
+                    new_value=new_threshold,
+                    improvement=0.15,  # Memory reduction benefit
+                    confidence=0.7
+                ))
+        
+        # Optimize buffer sizes based on I/O patterns
+        io_metrics = [m for m in metrics if m.name in ["read_time", "write_time"]]
+        if io_metrics:
+            avg_io_time = statistics.mean(m.value for m in io_metrics)
+            
+            if avg_io_time > 0.1:  # Slow I/O - increase buffer size
+                old_buffer = self.parameters["buffer_size"]
+                min_val, max_val = self.parameter_ranges["buffer_size"]
+                new_buffer = min(max_val, old_buffer * 2)
+                
+                if new_buffer != old_buffer:
+                    results.append(OptimizationResult(
+                        parameter_name="buffer_size",
+                        old_value=old_buffer,
+                        new_value=new_buffer,
+                        improvement=0.2,
+                        confidence=0.6
+                    ))
+        
+        return results
+    
+    def get_parameters(self) -> Dict[str, Any]:
+        """Get current system parameters."""
+        return self.parameters.copy()
+    
+    def apply_parameters(self, parameters: Dict[str, Any]) -> bool:
+        """Apply system parameters."""
+        try:
+            for key, value in parameters.items():
+                if key in self.parameters:
+                    self.parameters[key] = value
+            
+            # Apply system-level changes (implementation specific)
+            self.logger.info(f"Applied system parameters: {parameters}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to apply system parameters: {e}")
+            return False
+
+
+class AdaptivePerformanceManager:
+    """Adaptive performance management with multiple optimizers."""
+    
+    def __init__(self):
+        self.optimizers: Dict[str, PerformanceOptimizer] = {}
+        self.metrics_history: deque = deque(maxlen=10000)
+        self.optimization_history: List[Dict[str, Any]] = []
+        self.lock = threading.RLock()
+        self.logger = logging.getLogger(__name__)
+        
+        # Configuration
+        self.optimization_interval = 300  # 5 minutes
+        self.min_confidence_threshold = 0.5
+        self.optimization_active = False
+        
+        # A/B testing for optimization validation
+        self.ab_test_duration = 600  # 10 minutes
+        self.current_ab_test = None
+    
+    def add_optimizer(self, name: str, optimizer: PerformanceOptimizer):
+        """Add performance optimizer."""
+        with self.lock:
+            self.optimizers[name] = optimizer
+            self.logger.info(f"Added optimizer: {name}")
+    
+    def record_metric(self, metric: PerformanceMetric):
         """Record performance metric."""
-        metric = PerformanceMetric(
-            name=name,
-            value=value,
-            timestamp=datetime.utcnow(),
-            labels=labels or {}
-        )
-        
-        with self._lock:
-            self.metrics.append(metric)
+        with self.lock:
+            self.metrics_history.append(metric)
     
-    def record_query_performance(
-        self,
-        response_time: float,
-        factuality_score: float,
-        source_count: int,
-        success: bool,
-        query_type: str = "general",
-        error_type: Optional[str] = None
-    ) -> None:
-        """Record comprehensive query performance data."""
-        labels = {
-            "query_type": query_type,
-            "success": str(success).lower()
-        }
-        
-        if error_type:
-            labels["error_type"] = error_type
-        
-        self.record_metric("response_time", response_time, labels)
-        self.record_metric("factuality_score", factuality_score, labels)
-        self.record_metric("source_count", source_count, labels)
-        
-        if success:
-            self.record_metric("successful_queries", 1.0, labels)
-        else:
-            self.record_metric("failed_queries", 1.0, labels)
-    
-    def start_auto_optimization(self) -> None:
-        """Start background auto-optimization."""
-        if self._optimization_thread and self._optimization_thread.is_alive():
+    def start_optimization(self):
+        """Start automatic performance optimization."""
+        if self.optimization_active:
             return
         
-        self._stop_optimization.clear()
-        self._optimization_thread = threading.Thread(
-            target=self._optimization_loop,
-            name="PerformanceOptimizer",
-            daemon=True
-        )
-        self._optimization_thread.start()
-        
-        self.logger.info("Started auto-optimization")
+        self.optimization_active = True
+        optimization_thread = threading.Thread(target=self._optimization_loop, daemon=True)
+        optimization_thread.start()
+        self.logger.info("Started adaptive performance optimization")
     
-    def stop_auto_optimization(self) -> None:
-        """Stop background auto-optimization."""
-        self._stop_optimization.set()
-        
-        if self._optimization_thread:
-            self._optimization_thread.join(timeout=5.0)
-        
-        self.logger.info("Stopped auto-optimization")
+    def stop_optimization(self):
+        """Stop automatic performance optimization."""
+        self.optimization_active = False
+        self.logger.info("Stopped adaptive performance optimization")
     
-    def _optimization_loop(self) -> None:
+    def force_optimization(self) -> Dict[str, Any]:
+        """Force immediate optimization cycle."""
+        with self.lock:
+            return self._run_optimization_cycle()
+    
+    def _optimization_loop(self):
         """Main optimization loop."""
-        while not self._stop_optimization.is_set():
+        while self.optimization_active:
             try:
-                # Wait for optimization interval
-                if self._stop_optimization.wait(self.optimization_interval.total_seconds()):
-                    break
+                time.sleep(self.optimization_interval)
                 
-                # Check if we have enough data
-                if len(self.metrics) < self.min_samples:
-                    continue
-                
-                # Perform optimization
-                self._perform_optimization()
+                with self.lock:
+                    self._run_optimization_cycle()
                 
             except Exception as e:
                 self.logger.error(f"Optimization loop error: {e}")
+                time.sleep(60)  # Back off on errors
     
-    def _perform_optimization(self) -> None:
-        """Perform system optimization based on metrics."""
-        with self._lock:
-            # Analyze current performance
-            current_profile = self._analyze_current_performance()
-            
-            # Generate optimization suggestions
-            suggestions = self._generate_optimization_suggestions(current_profile)
-            
-            # Apply high-confidence suggestions
-            applied_optimizations = self._apply_optimizations(suggestions)
-            
-            # Record optimization
-            if applied_optimizations:
-                self.performance_history.append(current_profile)
-                self.last_optimization = datetime.utcnow()
-                
-                self.logger.info(
-                    f"Applied {len(applied_optimizations)} optimizations: "
-                    f"{[opt.parameter for opt in applied_optimizations]}"
-                )
-    
-    def _analyze_current_performance(self) -> PerformanceProfile:
-        """Analyze current system performance."""
-        cutoff_time = datetime.utcnow() - self.monitoring_window
-        recent_metrics = [m for m in self.metrics if m.timestamp >= cutoff_time]
+    def _run_optimization_cycle(self) -> Dict[str, Any]:
+        """Run one optimization cycle."""
+        if not self.metrics_history:
+            return {"status": "no_metrics"}
+        
+        # Get recent metrics for analysis
+        cutoff_time = datetime.utcnow() - timedelta(minutes=30)
+        recent_metrics = [
+            m for m in self.metrics_history
+            if m.timestamp > cutoff_time
+        ]
         
         if not recent_metrics:
-            return self._create_empty_profile()
+            return {"status": "no_recent_metrics"}
         
-        # Group metrics by type
-        metric_groups = defaultdict(list)
-        for metric in recent_metrics:
-            metric_groups[metric.name].append(metric.value)
+        optimization_results = {}
+        applied_optimizations = []
         
-        # Calculate performance statistics
-        response_times = metric_groups.get('response_time', [1.0])
-        factuality_scores = metric_groups.get('factuality_score', [0.95])
-        source_counts = metric_groups.get('source_count', [5])
-        successful_queries = sum(metric_groups.get('successful_queries', []))
-        total_queries = successful_queries + sum(metric_groups.get('failed_queries', []))
+        # Run each optimizer
+        for name, optimizer in self.optimizers.items():
+            try:
+                results = optimizer.optimize(recent_metrics)
+                
+                # Apply high-confidence optimizations
+                for result in results:
+                    if result.confidence >= self.min_confidence_threshold:
+                        # Get current parameters
+                        current_params = optimizer.get_parameters()
+                        
+                        # Create new parameters with optimization
+                        new_params = current_params.copy()
+                        new_params[result.parameter_name] = result.new_value
+                        
+                        # Apply optimization
+                        if optimizer.apply_parameters(new_params):
+                            result.applied = True
+                            applied_optimizations.append({
+                                "optimizer": name,
+                                "parameter": result.parameter_name,
+                                "old_value": result.old_value,
+                                "new_value": result.new_value,
+                                "improvement": result.improvement,
+                                "confidence": result.confidence
+                            })
+                            
+                            self.logger.info(
+                                f"Applied optimization: {name}.{result.parameter_name} "
+                                f"{result.old_value} -> {result.new_value} "
+                                f"(confidence: {result.confidence:.2f})"
+                            )
+                
+                optimization_results[name] = [
+                    {
+                        "parameter": r.parameter_name,
+                        "improvement": r.improvement,
+                        "confidence": r.confidence,
+                        "applied": r.applied
+                    }
+                    for r in results
+                ]
+                
+            except Exception as e:
+                self.logger.error(f"Optimizer {name} failed: {e}")
+                optimization_results[name] = {"error": str(e)}
         
-        # Calculate throughput
-        time_window_seconds = self.monitoring_window.total_seconds()
-        throughput_qps = total_queries / time_window_seconds if time_window_seconds > 0 else 0
-        
-        # Estimate resource usage (simplified)
-        resource_usage = {
-            'cpu_utilization': min(0.8, statistics.mean(response_times) / 5.0),
-            'memory_utilization': min(0.9, len(recent_metrics) / 1000.0),
-            'cache_hit_rate': 0.7  # Placeholder
+        # Record optimization cycle
+        cycle_record = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "metrics_analyzed": len(recent_metrics),
+            "optimizations": optimization_results,
+            "applied": applied_optimizations
         }
         
-        return PerformanceProfile(
-            workload_type="mixed",
-            query_patterns=["general"],
-            avg_response_time=statistics.mean(response_times),
-            avg_factuality_score=statistics.mean(factuality_scores),
-            avg_source_count=statistics.mean(source_counts),
-            throughput_qps=throughput_qps,
-            resource_usage=resource_usage,
-            optimization_suggestions=[]
-        )
-    
-    def _generate_optimization_suggestions(
-        self, 
-        profile: PerformanceProfile
-    ) -> List[OptimizationSuggestion]:
-        """Generate optimization suggestions based on performance profile."""
-        suggestions = []
+        self.optimization_history.append(cycle_record)
         
-        # Response time optimizations
-        if profile.avg_response_time > 3.0:
-            suggestions.extend(self._suggest_response_time_optimizations(profile))
+        # Limit history size
+        if len(self.optimization_history) > 100:
+            self.optimization_history = self.optimization_history[-50:]
         
-        # Throughput optimizations
-        if profile.throughput_qps < 5.0:
-            suggestions.extend(self._suggest_throughput_optimizations(profile))
-        
-        # Quality optimizations
-        if profile.avg_factuality_score < 0.9:
-            suggestions.extend(self._suggest_quality_optimizations(profile))
-        
-        # Resource optimizations
-        if profile.resource_usage.get('cpu_utilization', 0) > 0.8:
-            suggestions.extend(self._suggest_resource_optimizations(profile))
-        
-        return suggestions
-    
-    def _suggest_response_time_optimizations(
-        self, 
-        profile: PerformanceProfile
-    ) -> List[OptimizationSuggestion]:
-        """Suggest optimizations to improve response time."""
-        suggestions = []
-        
-        # Reduce retrieval top_k if response time is high
-        current_top_k = self.current_parameters.get('retrieval_top_k', 20)
-        if current_top_k > 10 and profile.avg_response_time > 5.0:
-            suggestions.append(OptimizationSuggestion(
-                component="retrieval",
-                parameter="retrieval_top_k",
-                current_value=current_top_k,
-                suggested_value=max(10, current_top_k - 5),
-                reason="Reduce retrieval time by fetching fewer sources",
-                confidence=0.8,
-                estimated_improvement=0.3
-            ))
-        
-        # Increase cache TTL to improve hit rate
-        current_ttl = self.current_parameters.get('cache_ttl_queries', 1800)
-        if current_ttl < 3600:
-            suggestions.append(OptimizationSuggestion(
-                component="caching",
-                parameter="cache_ttl_queries",
-                current_value=current_ttl,
-                suggested_value=min(3600, current_ttl * 1.5),
-                reason="Increase cache hit rate to reduce processing time",
-                confidence=0.7,
-                estimated_improvement=0.2
-            ))
-        
-        # Reduce factuality timeout for faster processing
-        current_timeout = self.current_parameters.get('factuality_timeout', 10.0)
-        if current_timeout > 5.0 and profile.avg_factuality_score > 0.95:
-            suggestions.append(OptimizationSuggestion(
-                component="factuality",
-                parameter="factuality_timeout",
-                current_value=current_timeout,
-                suggested_value=max(5.0, current_timeout * 0.8),
-                reason="Reduce factuality verification time while maintaining quality",
-                confidence=0.6,
-                estimated_improvement=0.15
-            ))
-        
-        return suggestions
-    
-    def _suggest_throughput_optimizations(
-        self, 
-        profile: PerformanceProfile
-    ) -> List[OptimizationSuggestion]:
-        """Suggest optimizations to improve throughput."""
-        suggestions = []
-        
-        # Increase concurrency
-        current_concurrent = self.current_parameters.get('max_concurrent_queries', 10)
-        if current_concurrent < 20 and profile.resource_usage.get('cpu_utilization', 0) < 0.7:
-            suggestions.append(OptimizationSuggestion(
-                component="concurrency",
-                parameter="max_concurrent_queries",
-                current_value=current_concurrent,
-                suggested_value=min(20, current_concurrent + 5),
-                reason="Increase concurrency to improve throughput",
-                confidence=0.7,
-                estimated_improvement=0.4
-            ))
-        
-        # Increase thread pool size
-        current_pool_size = self.current_parameters.get('thread_pool_size', 8)
-        if current_pool_size < 16:
-            suggestions.append(OptimizationSuggestion(
-                component="threading",
-                parameter="thread_pool_size",
-                current_value=current_pool_size,
-                suggested_value=min(16, current_pool_size + 2),
-                reason="Increase thread pool for better parallel processing",
-                confidence=0.6,
-                estimated_improvement=0.2
-            ))
-        
-        return suggestions
-    
-    def _suggest_quality_optimizations(
-        self, 
-        profile: PerformanceProfile
-    ) -> List[OptimizationSuggestion]:
-        """Suggest optimizations to improve quality."""
-        suggestions = []
-        
-        # Increase retrieval top_k for better source coverage
-        current_top_k = self.current_parameters.get('retrieval_top_k', 20)
-        if current_top_k < 30 and profile.avg_factuality_score < 0.9:
-            suggestions.append(OptimizationSuggestion(
-                component="retrieval",
-                parameter="retrieval_top_k",
-                current_value=current_top_k,
-                suggested_value=min(30, current_top_k + 5),
-                reason="Retrieve more sources to improve factuality",
-                confidence=0.8,
-                estimated_improvement=0.1
-            ))
-        
-        # Increase factuality ensemble size
-        current_ensemble = self.current_parameters.get('factuality_ensemble_size', 3)
-        if current_ensemble < 5:
-            suggestions.append(OptimizationSuggestion(
-                component="factuality",
-                parameter="factuality_ensemble_size",
-                current_value=current_ensemble,
-                suggested_value=min(5, current_ensemble + 1),
-                reason="Use more factuality models for better verification",
-                confidence=0.7,
-                estimated_improvement=0.05
-            ))
-        
-        return suggestions
-    
-    def _suggest_resource_optimizations(
-        self, 
-        profile: PerformanceProfile
-    ) -> List[OptimizationSuggestion]:
-        """Suggest optimizations to reduce resource usage."""
-        suggestions = []
-        
-        # Reduce batch size to lower memory usage
-        current_batch_size = self.current_parameters.get('retrieval_batch_size', 10)
-        if current_batch_size > 5:
-            suggestions.append(OptimizationSuggestion(
-                component="retrieval",
-                parameter="retrieval_batch_size",
-                current_value=current_batch_size,
-                suggested_value=max(5, current_batch_size - 2),
-                reason="Reduce batch size to lower memory usage",
-                confidence=0.6,
-                estimated_improvement=0.1
-            ))
-        
-        # Reduce cache size to free memory
-        current_cache_size = self.current_parameters.get('cache_max_size', 1000)
-        if current_cache_size > 500:
-            suggestions.append(OptimizationSuggestion(
-                component="caching",
-                parameter="cache_max_size",
-                current_value=current_cache_size,
-                suggested_value=max(500, int(current_cache_size * 0.8)),
-                reason="Reduce cache size to free memory",
-                confidence=0.5,
-                estimated_improvement=0.05
-            ))
-        
-        return suggestions
-    
-    def _apply_optimizations(
-        self, 
-        suggestions: List[OptimizationSuggestion]
-    ) -> List[OptimizationSuggestion]:
-        """Apply high-confidence optimization suggestions."""
-        applied = []
-        
-        for suggestion in suggestions:
-            # Only apply high-confidence suggestions
-            if suggestion.confidence >= 0.7:
-                # Update parameter
-                self.current_parameters[suggestion.parameter] = suggestion.suggested_value
-                
-                # Record parameter change
-                self.parameter_history[suggestion.parameter].append(
-                    (datetime.utcnow(), suggestion.suggested_value)
-                )
-                
-                applied.append(suggestion)
-        
-        return applied
-    
-    def _create_empty_profile(self) -> PerformanceProfile:
-        """Create empty performance profile."""
-        return PerformanceProfile(
-            workload_type="unknown",
-            query_patterns=[],
-            avg_response_time=1.0,
-            avg_factuality_score=0.95,
-            avg_source_count=5,
-            throughput_qps=0.0,
-            resource_usage={},
-            optimization_suggestions=[]
-        )
-    
-    def get_current_parameters(self) -> Dict[str, Any]:
-        """Get current optimized parameters."""
-        with self._lock:
-            return self.current_parameters.copy()
-    
-    def get_optimization_history(self) -> List[PerformanceProfile]:
-        """Get optimization history."""
-        with self._lock:
-            return self.performance_history.copy()
+        return cycle_record
     
     def get_performance_summary(self) -> Dict[str, Any]:
-        """Get performance summary."""
-        cutoff_time = datetime.utcnow() - self.monitoring_window
-        recent_metrics = [m for m in self.metrics if m.timestamp >= cutoff_time]
-        
-        if not recent_metrics:
-            return {"status": "no_data"}
-        
-        # Group metrics
-        metric_groups = defaultdict(list)
-        for metric in recent_metrics:
-            metric_groups[metric.name].append(metric.value)
-        
-        response_times = metric_groups.get('response_time', [])
-        factuality_scores = metric_groups.get('factuality_score', [])
-        
-        return {
-            "monitoring_window_minutes": self.monitoring_window.total_seconds() / 60,
-            "total_metrics": len(recent_metrics),
-            "avg_response_time": statistics.mean(response_times) if response_times else 0,
-            "p95_response_time": statistics.quantiles(response_times, n=20)[18] if len(response_times) > 20 else 0,
-            "avg_factuality_score": statistics.mean(factuality_scores) if factuality_scores else 0,
-            "last_optimization": self.last_optimization.isoformat(),
-            "optimizations_applied": len(self.performance_history),
-            "current_parameters": self.current_parameters
-        }
+        """Get comprehensive performance summary."""
+        with self.lock:
+            if not self.metrics_history:
+                return {"status": "no_data"}
+            
+            # Calculate overall performance trends
+            recent_metrics = list(self.metrics_history)[-100:]  # Last 100 metrics
+            
+            # Group by component and metric name
+            grouped_metrics = defaultdict(list)
+            for metric in recent_metrics:
+                key = f"{metric.component}.{metric.name}"
+                grouped_metrics[key].append(metric.value)
+            
+            # Calculate statistics for each metric group
+            metric_stats = {}
+            for key, values in grouped_metrics.items():
+                if len(values) >= 3:  # Need at least 3 data points
+                    metric_stats[key] = {
+                        "count": len(values),
+                        "avg": statistics.mean(values),
+                        "min": min(values),
+                        "max": max(values),
+                        "std": statistics.stdev(values) if len(values) > 1 else 0
+                    }
+            
+            return {
+                "total_metrics": len(self.metrics_history),
+                "recent_metrics": len(recent_metrics),
+                "metric_stats": metric_stats,
+                "optimization_cycles": len(self.optimization_history),
+                "last_optimization": self.optimization_history[-1] if self.optimization_history else None,
+                "optimizers": list(self.optimizers.keys()),
+                "optimization_active": self.optimization_active
+            }
     
-    def force_optimization(self) -> Dict[str, Any]:
-        """Force immediate optimization and return results."""
-        self._perform_optimization()
-        
-        return {
-            "optimization_timestamp": datetime.utcnow().isoformat(),
-            "parameters_updated": self.current_parameters,
-            "performance_summary": self.get_performance_summary()
-        }
+    def get_current_parameters(self) -> Dict[str, Dict[str, Any]]:
+        """Get current parameters from all optimizers."""
+        with self.lock:
+            return {
+                name: optimizer.get_parameters()
+                for name, optimizer in self.optimizers.items()
+            }
     
-    def save_optimization_state(self, filepath: str) -> None:
-        """Save optimization state to file."""
-        state = {
-            "current_parameters": self.current_parameters,
-            "parameter_history": {
-                param: [(timestamp.isoformat(), value) for timestamp, value in history]
-                for param, history in self.parameter_history.items()
-            },
-            "performance_history": [
-                {
-                    "workload_type": profile.workload_type,
-                    "avg_response_time": profile.avg_response_time,
-                    "avg_factuality_score": profile.avg_factuality_score,
-                    "throughput_qps": profile.throughput_qps,
-                    "resource_usage": profile.resource_usage
-                }
-                for profile in self.performance_history
-            ],
-            "last_optimization": self.last_optimization.isoformat()
-        }
-        
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, 'w') as f:
-            json.dump(state, f, indent=2)
-        
-        self.logger.info(f"Saved optimization state to {filepath}")
-    
-    def load_optimization_state(self, filepath: str) -> None:
-        """Load optimization state from file."""
-        if not os.path.exists(filepath):
-            return
-        
-        try:
-            with open(filepath, 'r') as f:
-                state = json.load(f)
-            
-            self.current_parameters = state.get("current_parameters", {})
-            
-            # Restore parameter history
-            self.parameter_history.clear()
-            for param, history in state.get("parameter_history", {}).items():
-                self.parameter_history[param] = [
-                    (datetime.fromisoformat(timestamp), value)
-                    for timestamp, value in history
-                ]
-            
-            # Restore last optimization time
-            if "last_optimization" in state:
-                self.last_optimization = datetime.fromisoformat(state["last_optimization"])
-            
-            self.logger.info(f"Loaded optimization state from {filepath}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to load optimization state: {e}")
+    def get_optimization_history(self) -> List[Dict[str, Any]]:
+        """Get optimization history."""
+        with self.lock:
+            return self.optimization_history.copy()
+
+
+# Global performance manager
+global_performance_manager = AdaptivePerformanceManager()

@@ -7,11 +7,17 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import json
 import os
-import numpy as np
-from sentence_transformers import SentenceTransformer
-import faiss
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+try:
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
+    import faiss
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    ML_AVAILABLE = True
+except ImportError:
+    # Fallback for Generation 1 - stub implementations
+    ML_AVAILABLE = False
+    np = None
 import pickle
 import hashlib
 
@@ -132,6 +138,12 @@ class HybridRetriever:
     
     def _initialize_models(self):
         """Initialize embedding model and vectorizers."""
+        if not ML_AVAILABLE:
+            self.logger.warning("ML dependencies not available, using mock retrieval")
+            self.embedding_model = None
+            self.tfidf_vectorizer = None
+            return
+            
         try:
             self.logger.info(f"Loading embedding model: {self.embedding_model_name}")
             self.embedding_model = SentenceTransformer(self.embedding_model_name)
@@ -152,10 +164,11 @@ class HybridRetriever:
     
     def _build_indices(self):
         """Build FAISS index and TF-IDF matrix from documents."""
+        if not ML_AVAILABLE or self.embedding_model is None:
+            self.documents = self.mock_knowledge_base.copy()
+            return
+            
         try:
-            if self.embedding_model is None:
-                return
-                
             self.documents = self.mock_knowledge_base.copy()
             
             # Extract text for indexing

@@ -15,14 +15,26 @@ import tempfile
 import requests
 import mimetypes
 
-# Document processing libraries
-import PyPDF2
-from docx import Document as DocxDocument
-import markdown
-from bs4 import BeautifulSoup
-import pandas as pd
-from PIL import Image
-import pytesseract  # OCR for images
+# Document processing libraries with fallbacks
+try:
+    import PyPDF2
+    from docx import Document as DocxDocument
+    import markdown
+    from bs4 import BeautifulSoup
+    import pandas as pd
+    from PIL import Image
+    import pytesseract  # OCR for images
+    DOC_PROCESSING_AVAILABLE = True
+except ImportError:
+    DOC_PROCESSING_AVAILABLE = False
+    # Mock imports for Generation 1
+    PyPDF2 = None
+    DocxDocument = None
+    markdown = None
+    BeautifulSoup = None
+    pd = None
+    Image = None
+    pytesseract = None
 
 
 @dataclass
