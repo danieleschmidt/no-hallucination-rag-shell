@@ -13,9 +13,15 @@ from datetime import datetime
 from pathlib import Path
 import hashlib
 
-# Vector database libraries
-import faiss
-from sentence_transformers import SentenceTransformer
+# Vector database libraries with fallback
+try:
+    import faiss
+    from sentence_transformers import SentenceTransformer
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+    faiss = None
+    SentenceTransformer = None
 
 from .document_processor import DocumentChunk
 
@@ -86,6 +92,13 @@ class VectorStore:
     
     def _initialize_embedding_model(self):
         """Initialize the sentence transformer model."""
+        if not ML_AVAILABLE:
+            self.logger.warning("ML dependencies not available - VectorStore disabled")
+            self.embedding_model = None
+            self.dimension = 384  # Default dimension
+            self.stats.dimension = self.dimension
+            return
+            
         try:
             self.logger.info(f"Loading embedding model: {self.embedding_model_name}")
             self.embedding_model = SentenceTransformer(self.embedding_model_name)
@@ -99,7 +112,8 @@ class VectorStore:
             
         except Exception as e:
             self.logger.error(f"Failed to load embedding model: {e}")
-            raise RuntimeError(f"Could not initialize embedding model: {e}")
+            self.embedding_model = None
+            self.dimension = 384  # Default fallback
     
     def add_chunks(self, chunks: List[DocumentChunk], batch_size: int = 32) -> int:
         """
@@ -112,6 +126,10 @@ class VectorStore:
         Returns:
             Number of chunks added
         """
+        if not ML_AVAILABLE or not self.embedding_model:
+            self.logger.warning("Vector store not available - skipping chunk addition")
+            return 0
+            
         import time
         start_time = time.time()
         

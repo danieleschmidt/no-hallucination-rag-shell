@@ -1,0 +1,112 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.pytest_cache
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+node_modules/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Build outputs
+build/
+dist/
+
+# Documentation build
+docs/_build/
+
+# Testing
+.pytest_cache/
+.coverage
+
+# Development files
+test_*.py
+*test.py
+tests/
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Temporary files
+temp/
+tmp/
+
+# Cache directories
+cache/
+.cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Local development
+scripts/dev-*
+*.local
+
+# Docker
+.dockerignore
+docker-compose.override.yml

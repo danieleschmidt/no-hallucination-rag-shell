@@ -1,0 +1,77 @@
+# Docker Compose for production deployment
+version: '3.8'
+
+services:
+  terragon-rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: terragon-rag-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - CACHE_SIZE_L1=1000
+      - CACHE_SIZE_L2=10000
+      - CACHE_SIZE_L3=100000
+      - MAX_WORKERS=4
+      - QUANTUM_COHERENCE_TIME=300
+    volumes:
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+      - ./data:/app/data
+    networks:
+      - terragon-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  redis:
+    image: redis:7-alpine
+    container_name: terragon-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - terragon-network
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+  monitoring:
+    image: prom/prometheus:latest
+    container_name: terragon-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - terragon-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+
+volumes:
+  redis_data:
+  prometheus_data:
+
+networks:
+  terragon-network:
+    driver: bridge

@@ -1,0 +1,259 @@
+# Kubernetes deployment for Terragon RAG System
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: terragon
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: terragon-rag
+  namespace: terragon
+  labels:
+    app: terragon-rag
+    version: v1.0.0
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: terragon-rag
+  template:
+    metadata:
+      labels:
+        app: terragon-rag
+        version: v1.0.0
+    spec:
+      containers:
+      - name: terragon-rag
+        image: terragon/rag:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: REDIS_URL
+          value: "redis://terragon-redis:6379"
+        - name: CACHE_SIZE_L1
+          value: "1000"
+        - name: CACHE_SIZE_L2
+          value: "10000"
+        - name: CACHE_SIZE_L3
+          value: "100000"
+        - name: MAX_WORKERS
+          value: "4"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        volumeMounts:
+        - name: cache-storage
+          mountPath: /app/cache
+        - name: logs-storage
+          mountPath: /app/logs
+      volumes:
+      - name: cache-storage
+        persistentVolumeClaim:
+          claimName: terragon-cache-pvc
+      - name: logs-storage
+        persistentVolumeClaim:
+          claimName: terragon-logs-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: terragon-rag-service
+  namespace: terragon
+  labels:
+    app: terragon-rag
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: terragon-rag
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: terragon-rag-ingress
+  namespace: terragon
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - terragon-rag.example.com
+    secretName: terragon-rag-tls
+  rules:
+  - host: terragon-rag.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: terragon-rag-service
+            port:
+              number: 80
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: terragon-redis
+  namespace: terragon
+  labels:
+    app: terragon-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: terragon-redis
+  template:
+    metadata:
+      labels:
+        app: terragon-redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+        command:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --maxmemory
+        - "512mb"
+        - --maxmemory-policy
+        - "allkeys-lru"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+      volumes:
+      - name: redis-storage
+        persistentVolumeClaim:
+          claimName: terragon-redis-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: terragon-redis
+  namespace: terragon
+  labels:
+    app: terragon-redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  selector:
+    app: terragon-redis
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: terragon-cache-pvc
+  namespace: terragon
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: terragon-logs-pvc
+  namespace: terragon
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: terragon-redis-pvc
+  namespace: terragon
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: terragon-rag-hpa
+  namespace: terragon
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: terragon-rag
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
