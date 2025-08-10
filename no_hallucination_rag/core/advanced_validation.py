@@ -45,12 +45,12 @@ class InputSanitizer:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         
-        # Dangerous patterns to detect/remove
+        # Dangerous patterns to detect/remove  
         self.sql_injection_patterns = [
-            r"(\');|(\');",
+            r"';\s*(drop|delete|insert|update)",
             r"(select|insert|update|delete|drop|create|alter)\s+",
             r"union\s+select",
-            r"or\s+1=1", 
+            r"or\s+1\s*=\s*1",
             r"--\s*$",
             r"/\*.*\*/"
         ]

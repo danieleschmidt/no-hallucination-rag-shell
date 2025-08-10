@@ -1,4 +1,3 @@
-```python
 """
 Hybrid retrieval combining dense and sparse retrieval methods.
 Generation 1: Basic functionality with graceful fallbacks.
@@ -360,4 +359,3 @@ class HybridRetriever:
             "embedding_model_loaded": self.embedding_model is not None if ML_AVAILABLE else False,
             "demo_mode": True
         }
-```
