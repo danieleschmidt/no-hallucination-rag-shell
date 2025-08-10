@@ -32,6 +32,14 @@ This guide covers deploying the No-Hallucination RAG System to production enviro
 
 ## Quick Start
 
+### CI/CD Setup (Optional)
+If you want to set up automated CI/CD with GitHub Actions:
+1. Copy `deployment/templates/github-workflow-template.yml` to `.github/workflows/deploy.yml`
+2. Ensure your GitHub repository has `workflows` permission enabled
+3. Configure required secrets: `KUBECONFIG` for Kubernetes access
+
+### Manual Deployment
+
 1. **Build and Push Docker Image**
    ```bash
    docker build -t terragon/no-hallucination-rag:latest .
