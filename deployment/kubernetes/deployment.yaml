@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-system
+  labels:
+    app: rag-system
+    version: v1.0.0
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rag-system
+  template:
+    metadata:
+      labels:
+        app: rag-system
+    spec:
+      containers:
+      - name: rag-system
+        image: terragon/no-hallucination-rag:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+        - name: data-volume
+          mountPath: /app/data
+      volumes:
+      - name: config-volume
+        configMap:
+          name: rag-system-config
+      - name: data-volume
+        persistentVolumeClaim:
+          claimName: rag-system-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-system-service
+spec:
+  selector:
+    app: rag-system
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-system-config
+data:
+  config.yaml: |
+    factuality_threshold: 0.8
+    max_sources: 5
+    cache_ttl: 300
+    rate_limit: 100
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rag-system-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
