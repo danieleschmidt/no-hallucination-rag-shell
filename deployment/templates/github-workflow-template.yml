@@ -1,6 +1,3 @@
-# GitHub Actions Workflow Template
-# Save this file as .github/workflows/deploy.yml (requires workflows permission)
-
 name: Deploy RAG System
 
 on:
@@ -11,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: your-org/no-hallucination-rag
+  IMAGE_NAME: terragon/no-hallucination-rag
 
 jobs:
   test:

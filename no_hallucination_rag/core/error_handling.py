@@ -58,12 +58,81 @@ class ProcessingError(Exception):
         self.context = context
 
 
-class ErrorHandler:
-    """Handles and categorizes errors."""
+class CircuitBreaker:
+    """Circuit breaker for fault tolerance."""
     
-    def __init__(self):
+    def __init__(self, failure_threshold: int = 5, reset_timeout: int = 60):
+        self.failure_threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+        
+    def call(self, func, *args, **kwargs):
+        """Execute function with circuit breaker protection."""
+        import time
+        
+        if self.state == "OPEN":
+            if time.time() - self.last_failure_time > self.reset_timeout:
+                self.state = "HALF_OPEN"
+            else:
+                raise Exception("Circuit breaker is OPEN")
+                
+        try:
+            result = func(*args, **kwargs)
+            if self.state == "HALF_OPEN":
+                self.state = "CLOSED"
+                self.failure_count = 0
+            return result
+        except Exception as e:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+            raise e
+
+
+class RetryManager:
+    """Manages retry logic with exponential backoff."""
+    
+    def __init__(self, max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 60.0):
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        
+    def retry_with_backoff(self, func, *args, **kwargs):
+        """Retry function with exponential backoff."""
+        import time
+        import random
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                if attempt == self.max_retries:
+                    raise e
+                    
+                delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+                jitter = random.uniform(0, 0.1) * delay
+                time.sleep(delay + jitter)
+                
+        raise Exception(f"Failed after {self.max_retries} retries")
+
+
+class ErrorHandler:
+    """Enhanced error handler with circuit breaker and retry logic."""
+    
+    def __init__(self, enable_circuit_breaker: bool = True, enable_retry: bool = True):
         self.logger = logging.getLogger(__name__)
+        self.circuit_breaker = CircuitBreaker() if enable_circuit_breaker else None
+        self.retry_manager = RetryManager() if enable_retry else None
         self.error_counts = {}
+        self.alert_thresholds = {
+            ErrorCategory.VALIDATION: 10,
+            ErrorCategory.RETRIEVAL: 5, 
+            ErrorCategory.PROCESSING: 8,
+            ErrorCategory.SYSTEM: 3
+        }
     
     def handle_error(self, error: Exception, context: Optional[ErrorContext] = None) -> ErrorDetails:
         """Handle and categorize an error."""

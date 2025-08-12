@@ -94,11 +94,10 @@ class FactualRAG:
         self.cache_manager = CacheManager() if enable_caching else None
         self.async_processor = AsyncRAGProcessor() if enable_concurrency else None
         self.thread_manager = ThreadPoolManager() if enable_concurrency else None
-        self.performance_optimizer = PerformanceOptimizer() if enable_optimization else None
+        from ..optimization.performance_optimizer import CacheOptimizer
+        self.performance_optimizer = CacheOptimizer(self.cache_manager) if enable_optimization else None
         
-        # Start optimization if enabled
-        if self.performance_optimizer:
-            self.performance_optimizer.start_auto_optimization()
+        # Start optimization if enabled (CacheOptimizer doesn't have start_auto_optimization)
         
         self.logger = logging.getLogger(__name__)
         
