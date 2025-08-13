@@ -36,6 +36,17 @@ class RateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.requests = defaultdict(deque)
+    
+    def is_allowed(self, client_id: str) -> Tuple[bool, Dict[str, Any]]:
+        """Check if request is allowed for client - compatibility method."""
+        user_context = {"user_id": client_id}
+        allowed = self.allow_request(user_context)
+        identifier = self._get_identifier(user_context)
+        return allowed, {
+            "requests_remaining": max(0, self.max_requests - len(self.requests[identifier])),
+            "minute_count": len(self.requests[identifier]),
+            "window_seconds": self.window_seconds
+        }
         
     def allow_request(self, user_context: Optional[dict] = None) -> bool:
         """Check if request is allowed based on rate limits."""

@@ -71,6 +71,11 @@ class AdaptiveCache:
         self.cache.clear()
         self.access_times.clear()
         self.creation_times.clear()
+    
+    def _save_to_disk(self):
+        """Save cache to disk (placeholder for persistence)."""
+        # In a production system, this would save cache state to disk
+        self.logger.debug(f"Cache state saved (simulated) - {len(self.cache)} items")
 
 
 class CacheManager:
@@ -85,6 +90,13 @@ class CacheManager:
             'query_hits': 0, 'query_misses': 0,
             'retrieval_hits': 0, 'retrieval_misses': 0,
             'factuality_hits': 0, 'factuality_misses': 0
+        }
+        
+        # For compatibility with tests and shutdown methods
+        self.caches = {
+            'queries': self.query_cache,
+            'retrieval': self.retrieval_cache,
+            'factuality': self.factuality_cache
         }
         
     def create_query_hash(self, query: str, params: Dict[str, Any]) -> str:
