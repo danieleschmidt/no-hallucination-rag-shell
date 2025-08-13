@@ -45,12 +45,12 @@ class InputSanitizer:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         
-        # Dangerous patterns to detect/remove  
+        # Dangerous patterns to detect/remove
         self.sql_injection_patterns = [
-            r"';\s*(drop|delete|insert|update)",
+            r"(\');|(\'\);",
             r"(select|insert|update|delete|drop|create|alter)\s+",
             r"union\s+select",
-            r"or\s+1\s*=\s*1",
+            r"or\s+1=1",
             r"--\s*$",
             r"/\*.*\*/"
         ]
@@ -225,7 +225,7 @@ class AdvancedValidator:
         
         # Basic checks
         if not query or not query.strip():
-            return ValidationResult(False, ["Query cannot be empty"], [])
+            return ValidationResult(False, ["Query cannot be empty"])
         
         # Length validation
         if len(query) > 10000:  # 10K character limit
