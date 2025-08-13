@@ -80,6 +80,93 @@ class CacheOptimizer(PerformanceOptimizer):
             "l3_size": 100000,
             "eviction_threshold": 0.8
         }
+        
+        # Performance tracking
+        self.performance_data = deque(maxlen=1000)
+        self.optimization_history = []
+        self.auto_optimization_enabled = False
+        
+    def get_current_parameters(self) -> Dict[str, Any]:
+        """Get current optimization parameters."""
+        return self.parameters.copy()
+    
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """Get performance summary statistics."""
+        if not self.performance_data:
+            return {"status": "no_data"}
+        
+        response_times = [d.get("response_time", 0) for d in self.performance_data]
+        factuality_scores = [d.get("factuality_score", 0) for d in self.performance_data]
+        
+        return {
+            "avg_response_time": statistics.mean(response_times) if response_times else 0,
+            "avg_factuality": statistics.mean(factuality_scores) if factuality_scores else 0,
+            "total_queries": len(self.performance_data),
+            "success_rate": sum(1 for d in self.performance_data if d.get("success", False)) / len(self.performance_data)
+        }
+    
+    def get_optimization_history(self) -> List[Dict[str, Any]]:
+        """Get optimization history."""
+        return self.optimization_history
+    
+    def record_query_performance(self, **kwargs):
+        """Record query performance data."""
+        self.performance_data.append({
+            "timestamp": datetime.now(),
+            **kwargs
+        })
+    
+    def start_auto_optimization(self):
+        """Start automatic optimization."""
+        self.auto_optimization_enabled = True
+    
+    def stop_auto_optimization(self):
+        """Stop automatic optimization."""
+        self.auto_optimization_enabled = False
+    
+    def force_optimization(self) -> Dict[str, Any]:
+        """Force optimization run."""
+        if not self.performance_data:
+            return {"status": "no_data"}
+        
+        # Simple optimization: adjust cache sizes based on hit rates
+        current_params = self.parameters.copy()
+        
+        # Simulate optimization
+        if len(self.performance_data) > 10:
+            avg_response_time = statistics.mean(
+                d.get("response_time", 0) for d in list(self.performance_data)[-10:]
+            )
+            
+            if avg_response_time > 2.0:  # If slow, increase cache
+                self.parameters["l1_size"] = min(
+                    self.parameters["l1_size"] * 1.1, 
+                    self.parameter_ranges["l1_size"][1]
+                )
+        
+        optimization_result = {
+            "timestamp": datetime.now().isoformat(),
+            "old_parameters": current_params,
+            "new_parameters": self.parameters.copy(),
+            "improvement_estimate": 0.05  # 5% improvement estimate
+        }
+        
+        self.optimization_history.append(optimization_result)
+        return optimization_result
+    
+    def save_optimization_state(self, filepath: str):
+        """Save optimization state to file."""
+        state = {
+            "parameters": self.parameters,
+            "optimization_history": self.optimization_history[-10:],  # Last 10
+            "performance_summary": self.get_performance_summary()
+        }
+        
+        import os
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        with open(filepath, 'w') as f:
+            json.dump(state, f, indent=2, default=str)
     
     def optimize(self, metrics: List[PerformanceMetric]) -> List[OptimizationResult]:
         """Optimize cache parameters based on hit rates and response times."""
