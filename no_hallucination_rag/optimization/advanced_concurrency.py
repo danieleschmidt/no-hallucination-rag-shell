@@ -42,30 +42,6 @@ class TaskResult:
     completed_at: datetime = field(default_factory=datetime.utcnow)
 
 
-@dataclass
-class TaskWrapper:
-    """Wrapper for tasks with metadata."""
-    coro: Any
-    priority: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-class LoadBalancer:
-    """Intelligent load balancer for distributing tasks."""
-    
-    def __init__(self, worker_pool):
-        self.worker_pool = worker_pool
-        self.logger = logging.getLogger(__name__)
-        
-    def get_best_worker(self) -> str:
-        """Get the best worker for task assignment."""
-        if not self.worker_pool.worker_loads:
-            return "worker_0"
-            
-        # Find worker with lowest load
-        return min(self.worker_pool.worker_loads.items(), key=lambda x: x[1])[0]
-
-
 class ConnectionPool:
     """Generic connection pool for resource management."""
     

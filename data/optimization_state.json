@@ -1,12 +1,1 @@
-{
-  "parameters": {
-    "l1_size": 1000,
-    "l2_size": 10000,
-    "l3_size": 100000,
-    "eviction_threshold": 0.8
-  },
-  "optimization_history": [],
-  "performance_summary": {
-    "status": "no_data"
-  }
-}
+{"parameters": {"l1_size": 1000, "l2_size": 10000, "l3_size": 100000, "eviction_threshold": 0.8}, "timestamp": 1755117860.7545033}
