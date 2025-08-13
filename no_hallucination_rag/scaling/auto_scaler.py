@@ -48,7 +48,7 @@ class ScalingEvent:
     timestamp: datetime
     resource_name: str
     resource_type: ResourceType
-    action: str
+    action: ScalingAction
     old_size: int
     new_size: int
     trigger_metrics: List[Any] = field(default_factory=list)
