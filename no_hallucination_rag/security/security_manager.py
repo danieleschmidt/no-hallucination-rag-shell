@@ -47,6 +47,10 @@ class RateLimiter:
             "minute_count": len(self.requests[identifier]),
             "window_seconds": self.window_seconds
         }
+    
+    def check_rate_limit(self, client_id: str) -> bool:
+        """Simple rate limit check - compatibility method."""
+        return self.is_allowed(client_id)[0]
         
     def allow_request(self, user_context: Optional[dict] = None) -> bool:
         """Check if request is allowed based on rate limits."""
@@ -194,6 +198,40 @@ class SecurityManager:
         # Log security events
         if threats:
             self._log_security_event(query, threats, risk_score, user_context)
+            
+        return SecurityValidationResult(
+            is_valid=risk_score < 50.0,
+            risk_score=risk_score,
+            threats=threats,
+            recommended_action="Allow" if risk_score < 30.0 else ("Monitor" if risk_score < 50.0 else "Block")
+        )
+        
+    def check_rate_limit(self, client_id: str) -> bool:
+        """Check rate limit for a client - compatibility method."""
+        if not self.rate_limiter:
+            return True
+        return self.rate_limiter.check_rate_limit(client_id)
+    
+    def _log_security_event(self, query: str, threats: List[str], risk_score: float, user_context: Optional[dict]):
+        """Log security event."""
+        event = {
+            "timestamp": time.time(),
+            "query": query[:100],  # Truncate for security
+            "threats": threats,
+            "risk_score": risk_score,
+            "user_context": user_context or {}
+        }
+        self.security_events.append(event)
+        self.logger.warning(f"Security event: {threats}, risk: {risk_score}")
+        
+    def get_security_stats(self) -> Dict[str, Any]:
+        """Get security statistics."""
+        return {
+            "total_events": len(self.security_events),
+            "threat_level": self.threat_level,
+            "rate_limiter_enabled": self.rate_limiter is not None,
+            "content_filter_enabled": self.content_filter is not None
+        }
             
         is_valid = risk_score < 50.0
         return SecurityValidationResult(

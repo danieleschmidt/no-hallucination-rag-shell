@@ -49,6 +49,42 @@ class CacheEvictionPolicy(ABC):
         pass
 
 
+class AdvancedCacheManager:
+    """Multi-level cache manager with L1, L2, L3 caches."""
+    
+    def __init__(self):
+        self.l1_cache = {}  # Fast in-memory cache
+        self.l2_cache = {}  # Larger in-memory cache
+        self.l3_cache = {}  # Persistent cache
+        
+    def set_l1(self, key: str, value: Any):
+        """Set value in L1 cache."""
+        self.l1_cache[key] = value
+        
+    def get_l1(self, key: str) -> Any:
+        """Get value from L1 cache."""
+        return self.l1_cache.get(key)
+        
+    def set_with_ttl(self, key: str, value: Any, ttl: int):
+        """Set value with TTL."""
+        import time
+        self.l2_cache[key] = {
+            "value": value,
+            "expires": time.time() + ttl
+        }
+        
+    def get(self, key: str) -> Any:
+        """Get value, checking TTL."""
+        import time
+        if key in self.l2_cache:
+            entry = self.l2_cache[key]
+            if time.time() > entry["expires"]:
+                del self.l2_cache[key]
+                return None
+            return entry["value"]
+        return self.l1_cache.get(key)
+
+
 class LRUEviction(CacheEvictionPolicy):
     """Least Recently Used eviction policy."""
     
