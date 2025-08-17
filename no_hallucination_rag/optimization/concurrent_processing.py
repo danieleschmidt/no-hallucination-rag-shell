@@ -41,7 +41,14 @@ class ThreadPoolManager:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        from concurrent.futures import ThreadPoolExecutor
+        self.executor = ThreadPoolExecutor(max_workers=4)
+        
+    def submit(self, fn, *args, **kwargs):
+        """Submit task to thread pool."""
+        return self.executor.submit(fn, *args, **kwargs)
         
     def shutdown(self):
         """Shutdown thread pool."""
-        pass
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=True)

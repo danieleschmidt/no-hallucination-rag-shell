@@ -17,7 +17,23 @@ class MetricsCollector:
         
     def counter(self, name: str, value: float, tags: Dict[str, str] = None):
         """Record a counter metric."""
-        pass
+        if name not in self.metrics:
+            self.metrics[name] = {"type": "counter", "value": 0, "tags": tags or {}}
+        self.metrics[name]["value"] += value
+    
+    def histogram(self, name: str, value: float, tags: Dict[str, str] = None):
+        """Record a histogram metric."""
+        if name not in self.metrics:
+            self.metrics[name] = {"type": "histogram", "values": [], "tags": tags or {}}
+        self.metrics[name]["values"].append(value)
+    
+    def gauge(self, name: str, value: float, tags: Dict[str, str] = None):
+        """Record a gauge metric."""
+        self.metrics[name] = {"type": "gauge", "value": value, "tags": tags or {}}
+    
+    def get_all_metrics(self) -> Dict[str, Any]:
+        """Get all collected metrics."""
+        return self.metrics.copy()
         
     def track_query_metrics(self, query: str, response_time: float, factuality_score: float,
                            source_count: int, success: bool, error_type: str = None):
