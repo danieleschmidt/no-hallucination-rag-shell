@@ -94,9 +94,10 @@ class QuantumTaskPlanner:
     - Measurement: Observing tasks collapses their superposition
     """
     
-    def __init__(self, max_coherence_time: float = 7200.0):
+    def __init__(self, max_coherence_time: float = 7200.0, max_superposition_tasks: Optional[int] = None):
         self.tasks: Dict[str, QuantumTask] = {}
         self.max_coherence_time = max_coherence_time
+        self.max_superposition_tasks = max_superposition_tasks or 50  # Default limit
         self.logger = logging.getLogger(__name__)
         self.executor = ThreadPoolExecutor(max_workers=4)
         
@@ -142,6 +143,17 @@ class QuantumTaskPlanner:
         self.logger.info(f"Created quantum task: {task.title} (ID: {task.id[:8]})")
         
         return task
+    
+    def add_task(self, task: QuantumTask) -> bool:
+        """Add an existing quantum task to the planner."""
+        if task.id in self.tasks:
+            return False
+        
+        self.tasks[task.id] = task
+        if task.id not in self.entanglement_graph:
+            self.entanglement_graph[task.id] = set()
+        self.logger.info(f"Added existing quantum task: {task.title} (ID: {task.id[:8]})")
+        return True
     
     def observe_task(self, task_id: str) -> Optional[QuantumTask]:
         """Observe a task, collapsing its superposition."""

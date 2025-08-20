@@ -25,7 +25,7 @@ class SupportedLanguage(Enum):
     KOREAN = "ko"
 
 
-class QuantumI18nManager:
+class I18nManager:
     """
     Internationalization manager for quantum task planning.
     

@@ -33,19 +33,48 @@ class SuperpositionTaskManager:
         
     def create_superposition(
         self, 
-        task_id: str, 
-        initial_states: Dict[TaskState, float]
+        initial_states: List[str] = None,
+        task_id: str = None, 
+        state_probs: Dict[TaskState, float] = None
     ) -> TaskSuperposition:
         """Create a new task superposition with given state probabilities."""
         
+        # Handle both call patterns
+        if initial_states and isinstance(initial_states, list):
+            # New API: create equal probability superposition from state names
+            task_id = task_id or f"superposition_{len(self.superpositions)}"
+            states_dict = {}
+            for state_name in initial_states:
+                # Convert string to TaskState enum
+                try:
+                    if hasattr(TaskState, state_name.upper()):
+                        states_dict[getattr(TaskState, state_name.upper())] = 1.0/len(initial_states)
+                    else:
+                        # Try with exact string match
+                        for task_state in TaskState:
+                            if task_state.value == state_name.lower():
+                                states_dict[task_state] = 1.0/len(initial_states)
+                                break
+                except:
+                    # Fallback: use superposition state
+                    states_dict[TaskState.SUPERPOSITION] = 1.0
+        else:
+            # Legacy API: use provided state probabilities
+            states_dict = state_probs or initial_states or {TaskState.SUPERPOSITION: 1.0}
+            task_id = task_id or f"task_{len(self.superpositions)}"
+        
+        # Ensure we have at least one state
+        if not states_dict:
+            states_dict = {TaskState.SUPERPOSITION: 1.0}
+        
         # Normalize probabilities to sum to 1
-        total_prob = sum(initial_states.values())
+        total_prob = sum(states_dict.values())
         if total_prob == 0:
             raise ValueError("Total probability cannot be zero")
         
         normalized_states = {
             state: prob / total_prob 
-            for state, prob in initial_states.items()
+            for state, prob in states_dict.items()
         }
         
         superposition = TaskSuperposition(
@@ -94,6 +123,10 @@ class SuperpositionTaskManager:
         self.logger.info(f"Task {task_id} superposition collapsed to: {collapsed_state.value}")
         
         return collapsed_state
+    
+    def measure(self, superposition_task: TaskSuperposition) -> Optional[TaskState]:
+        """Convenience method for measuring superposition (alias for measure_superposition)."""
+        return self.measure_superposition(superposition_task.task_id)
     
     def evolve_superposition(self, task_id: str, time_step: float = 1.0) -> bool:
         """Evolve task superposition over time using Schrödinger-like equation."""
