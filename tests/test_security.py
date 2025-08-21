@@ -7,7 +7,7 @@ import time
 from unittest.mock import Mock, patch
 
 from no_hallucination_rag.security.security_manager import (
-    SecurityManager, RateLimiter, RateLimitConfig
+    SecurityManager, RateLimiter
 )
 from no_hallucination_rag.core.validation import InputValidator, ValidationResult
 
