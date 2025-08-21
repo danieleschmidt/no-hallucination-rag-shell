@@ -6,7 +6,6 @@ Comprehensive monitoring, health checks, and observability system.
 import time
 import threading
 import logging
-import statistics
 from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -44,80 +43,6 @@ class MetricPoint:
     timestamp: datetime
     value: float
     labels: Dict[str, str] = field(default_factory=dict)
-
-
-class AdvancedMonitor:
-    """Advanced monitoring system with anomaly detection."""
-    
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.alerts = []
-        self.metrics_history = defaultdict(deque)
-        
-    def comprehensive_health_check(self) -> Dict[str, Any]:
-        """Perform comprehensive health check."""
-        try:
-            cpu_percent = psutil.cpu_percent()
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            
-            health = {
-                "overall_status": "healthy",
-                "timestamp": datetime.utcnow().isoformat(),
-                "system": {
-                    "cpu_percent": cpu_percent,
-                    "memory_percent": memory.percent,
-                    "disk_percent": disk.percent
-                },
-                "services": {
-                    "rag_service": "healthy",
-                    "cache_service": "healthy",
-                    "security_service": "healthy"
-                }
-            }
-            
-            # Determine overall status
-            if cpu_percent > 90 or memory.percent > 95 or disk.percent > 95:
-                health["overall_status"] = "critical"
-            elif cpu_percent > 80 or memory.percent > 85 or disk.percent > 85:
-                health["overall_status"] = "warning"
-                
-            return health
-            
-        except Exception as e:
-            self.logger.error(f"Health check failed: {e}")
-            return {
-                "overall_status": "error",
-                "error": str(e),
-                "timestamp": datetime.utcnow().isoformat()
-            }
-    
-    def detect_anomalies(self, metrics: Dict[str, List[float]]) -> Dict[str, Any]:
-        """Detect anomalies in metrics using statistical analysis."""
-        anomalies = {}
-        
-        for metric_name, values in metrics.items():
-            if len(values) < 5:  # Need minimum data points
-                continue
-                
-            mean_val = statistics.mean(values)
-            stdev_val = statistics.stdev(values) if len(values) > 1 else 0
-            
-            # Simple anomaly detection: values > 2 standard deviations from mean
-            outliers = []
-            for i, value in enumerate(values):
-                if abs(value - mean_val) > 2 * stdev_val:
-                    outliers.append({"index": i, "value": value})
-            
-            if outliers:
-                anomalies[metric_name] = {
-                    "anomalies_detected": len(outliers),
-                    "outliers": outliers,
-                    "threshold": 2 * stdev_val,
-                    "mean": mean_val
-                }
-        
-        return anomalies
 
 
 class HealthMonitor:
