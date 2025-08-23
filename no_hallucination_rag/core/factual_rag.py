@@ -783,9 +783,9 @@ class FactualRAG:
         # Performance optimization stats
         if self.performance_optimizer:
             stats["optimization"] = {
-                "current_parameters": self.performance_optimizer.get_current_parameters(),
-                "performance_summary": self.performance_optimizer.get_performance_summary(),
-                "optimization_history": len(self.performance_optimizer.get_optimization_history())
+                "current_parameters": getattr(self.performance_optimizer, 'current_parameters', {}),
+                "performance_summary": getattr(self.performance_optimizer, 'performance_summary', {}),
+                "optimization_history": len(getattr(self.performance_optimizer, 'optimization_history', []))
             }
         
         return stats
@@ -817,7 +817,7 @@ class FactualRAG:
         self.logger.info("Shutting down RAG system...")
         
         # Stop optimization
-        if self.performance_optimizer:
+        if self.performance_optimizer and hasattr(self.performance_optimizer, 'stop_auto_optimization'):
             self.performance_optimizer.stop_auto_optimization()
         
         # Shutdown thread pools
