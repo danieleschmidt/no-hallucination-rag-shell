@@ -1,1 +1,0 @@
-"""Verification components for factuality detection and validation."""
